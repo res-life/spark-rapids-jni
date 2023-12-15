@@ -17,6 +17,7 @@
 package com.nvidia.spark.rapids.jni;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.zone.ZoneOffsetTransition;
 import java.time.zone.ZoneRules;
@@ -27,11 +28,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
 import java.util.concurrent.*;
+import java.util.function.Function;
 
-import ai.rapids.cudf.ColumnVector;
-import ai.rapids.cudf.DType;
-import ai.rapids.cudf.HostColumnVector;
-import ai.rapids.cudf.Table;
+import ai.rapids.cudf.*;
 
 public class GpuTimeZoneDB {
 
@@ -43,14 +42,16 @@ public class GpuTimeZoneDB {
   //   LIST<STRUCT<utcInstant: int64, localInstant: int64, offset: int32>>
   private CompletableFuture<Map<String, Integer>> zoneIdToTableFuture;
   private CompletableFuture<HostColumnVector> fixedTransitionsFuture;
+  private CompletableFuture<HostColumnVector> zoneIdVectorFuture;
 
   private boolean closed = false;
 
   GpuTimeZoneDB() {
     zoneIdToTableFuture = new CompletableFuture<>();
     fixedTransitionsFuture = new CompletableFuture<>();
+    zoneIdVectorFuture = new CompletableFuture<>();
   }
-  
+
   private static GpuTimeZoneDB instance = new GpuTimeZoneDB();
   // This method is default visibility for testing purposes only. The instance will be never be exposed publicly
   // for this class.
@@ -174,6 +175,8 @@ public class GpuTimeZoneDB {
       try {
         Map<String, Integer> zoneIdToTable = new HashMap<>();
         List<List<HostColumnVector.StructData>> masterTransitions = new ArrayList<>();
+        List<String> zondIdList = new ArrayList<>();
+
         for (String tzId : TimeZone.getAvailableIDs()) {
           ZoneId zoneId;
           try {
@@ -206,6 +209,17 @@ public class GpuTimeZoneDB {
                       first.getOffsetBefore().getTotalSeconds())
               );
               transitions.forEach(t -> {
+                // A simple approach to transform LocalDateTime to a value which is proportional to
+                // the exact EpochSecond. After caching these values along with EpochSeconds, we
+                // can easily search out which time zone transition rule we should apply according
+                // to LocalDateTime structs. The searching procedure is same as the binary search with
+                // exact EpochSeconds(convert_timestamp_tz_functor), except using "loose EpochSeconds"
+                // as search index instead of exact EpochSeconds.
+                Function<LocalDateTime, Long> localToLooseEpochSecond = lt ->
+                        86400L * (lt.getYear() * 400L + (lt.getMonthValue() - 1) * 31L +
+                                lt.getDayOfMonth() - 1) +
+                                3600L * lt.getHour() + 60L * lt.getMinute() + lt.getSecond();
+
                 // Whether transition is an overlap vs gap.
                 // In Spark:
                 // if it's a gap, then we use the offset after *on* the instant
@@ -217,35 +231,45 @@ public class GpuTimeZoneDB {
                       new HostColumnVector.StructData(
                           t.getInstant().getEpochSecond(),
                           t.getInstant().getEpochSecond() + t.getOffsetAfter().getTotalSeconds(),
-                          t.getOffsetAfter().getTotalSeconds())
+                          t.getOffsetAfter().getTotalSeconds(),
+                          localToLooseEpochSecond.apply(t.getDateTimeAfter())
+                      )
                   );
                 } else {
                   data.add(
                       new HostColumnVector.StructData(
                           t.getInstant().getEpochSecond(),
                           t.getInstant().getEpochSecond() + t.getOffsetBefore().getTotalSeconds(),
-                          t.getOffsetAfter().getTotalSeconds())
+                          t.getOffsetAfter().getTotalSeconds(),
+                          localToLooseEpochSecond.apply(t.getDateTimeBefore())
+                      )
                   );
                 }
               });
             }
             masterTransitions.add(data);
             zoneIdToTable.put(zoneId.getId(), idx);
+            zondIdList.add(zoneId.getId());
           }
         }
+        zoneIdToTableFuture.complete(zoneIdToTable);
         HostColumnVector.DataType childType = new HostColumnVector.StructType(false,
             new HostColumnVector.BasicType(false, DType.INT64),
             new HostColumnVector.BasicType(false, DType.INT64),
-            new HostColumnVector.BasicType(false, DType.INT32));
+            new HostColumnVector.BasicType(false, DType.INT32),
+            new HostColumnVector.BasicType(false, DType.INT64));
         HostColumnVector.DataType resultType =
             new HostColumnVector.ListType(false, childType);
-        HostColumnVector fixedTransitions = HostColumnVector.fromLists(resultType,
-            masterTransitions.toArray(new List[0]));
-        fixedTransitionsFuture.complete(fixedTransitions);
-        zoneIdToTableFuture.complete(zoneIdToTable);
+        try (HostColumnVector fixedTransitions = HostColumnVector.fromLists(resultType, masterTransitions.toArray(new List[0]))) {
+          try (HostColumnVector zoneIdVector = HostColumnVector.fromStrings(zondIdList.toArray(new String[0]))) {
+            fixedTransitionsFuture.complete(fixedTransitions.incRefCount());
+            zoneIdVectorFuture.complete(zoneIdVector.incRefCount());
+          }
+        }
       } catch (Exception e) {
         fixedTransitionsFuture.completeExceptionally(e);
         zoneIdToTableFuture.completeExceptionally(e);
+        zoneIdVectorFuture.completeExceptionally(e);
         throw e;
       }
     }
@@ -274,6 +298,14 @@ public class GpuTimeZoneDB {
   private Map<String, Integer> getZoneIDMap() {
     try {
       return zoneIdToTableFuture.get(TIMEOUT_SECS, TimeUnit.SECONDS);
+    } catch (InterruptedException | ExecutionException | TimeoutException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  private ColumnVector getZoneIDVector() {
+    try (HostColumnVector hcv = zoneIdVectorFuture.get(TIMEOUT_SECS, TimeUnit.SECONDS)) {
+      return hcv.copyToDevice();
     } catch (InterruptedException | ExecutionException | TimeoutException e) {
       throw new RuntimeException(e);
     }
