@@ -199,14 +199,14 @@ public class GpuTimeZoneDB {
             if (zoneRules.isFixedOffset()) {
               data.add(
                   new HostColumnVector.StructData(Long.MIN_VALUE, Long.MIN_VALUE,
-                      zoneRules.getOffset(Instant.now()).getTotalSeconds())
+                      zoneRules.getOffset(Instant.now()).getTotalSeconds(), Long.MIN_VALUE)
               );
             } else {
               // Capture the first official offset (before any transition) using Long min
               ZoneOffsetTransition first = transitions.get(0);
               data.add(
                   new HostColumnVector.StructData(Long.MIN_VALUE, Long.MIN_VALUE,
-                      first.getOffsetBefore().getTotalSeconds())
+                      first.getOffsetBefore().getTotalSeconds(), Long.MIN_VALUE)
               );
               transitions.forEach(t -> {
                 // A simple approach to transform LocalDateTime to a value which is proportional to
