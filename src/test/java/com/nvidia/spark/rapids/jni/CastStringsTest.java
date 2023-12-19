@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -373,8 +374,7 @@ public class CastStringsTest {
             null,
             null,
             null);
-        ColumnVector actual = CastStrings.toTimestamp(input,
-            "Asia/Shanghai", false, false)) {
+        ColumnVector actual = CastStrings.toTimestamp(input, ZoneId.of("Asia/Shanghai"), false)) {
       AssertUtils.assertColumnsAreEqual(expected, actual);
     }
   }
@@ -384,14 +384,14 @@ public class CastStringsTest {
     assertThrows(IllegalArgumentException.class, () -> {
       try (ColumnVector input = ColumnVector.fromStrings(" invalid_value ")) {
         // ansiEnabled is true
-        CastStrings.toTimestamp(input, "Asia/Shanghai", false, true);
+        CastStrings.toTimestamp(input, ZoneId.of("Asia/Shanghai"), true);
       }
     });
 
     assertThrows(IllegalArgumentException.class, () -> {
       try (ColumnVector input = ColumnVector.fromStrings(" invalid_value ")) {
         // ansiEnabled is true
-        CastStrings.toTimestampWithoutTimeZone(input, true, false, true);
+        CastStrings.toTimestampWithoutTimeZone(input, false, true);
       }
     });
   }

@@ -35,6 +35,7 @@ import ai.rapids.cudf.*;
 public class GpuTimeZoneDB {
 
   public static final int TIMEOUT_SECS = 300;
+  public static final String[] SPECIAL_TZ_LITERALS = {"epoch", "now", "today", "tomorrow", "yesterday"};
 
 
   // For the timezone database, we store the transitions in a ColumnVector that is a list of 
@@ -43,6 +44,7 @@ public class GpuTimeZoneDB {
   private CompletableFuture<Map<String, Integer>> zoneIdToTableFuture;
   private CompletableFuture<HostColumnVector> fixedTransitionsFuture;
   private CompletableFuture<HostColumnVector> zoneIdVectorFuture;
+  private CompletableFuture<HostColumnVector> specialTzLiteralsFuture;
 
   private boolean closed = false;
 
@@ -50,6 +52,7 @@ public class GpuTimeZoneDB {
     zoneIdToTableFuture = new CompletableFuture<>();
     fixedTransitionsFuture = new CompletableFuture<>();
     zoneIdVectorFuture = new CompletableFuture<>();
+    specialTzLiteralsFuture = new CompletableFuture<>();
   }
 
   private static GpuTimeZoneDB instance = new GpuTimeZoneDB();
@@ -156,10 +159,11 @@ public class GpuTimeZoneDB {
     return ZoneId.of(formattedZoneId, ZoneId.SHORT_IDS);
   }
 
-  private boolean isLoaded() {
-    return zoneIdToTableFuture.isDone();
+  public boolean isLoaded() {
+    return zoneIdToTableFuture.isDone() && fixedTransitionsFuture.isDone() &&
+            zoneIdVectorFuture.isDone() && specialTzLiteralsFuture.isDone();
   }
-  
+
   private void loadData(Executor executor) throws IllegalStateException {
     // Start loading the data in separate thread and return
     try {
@@ -253,6 +257,7 @@ public class GpuTimeZoneDB {
           }
         }
         zoneIdToTableFuture.complete(zoneIdToTable);
+
         HostColumnVector.DataType childType = new HostColumnVector.StructType(false,
             new HostColumnVector.BasicType(false, DType.INT64),
             new HostColumnVector.BasicType(false, DType.INT64),
@@ -260,16 +265,21 @@ public class GpuTimeZoneDB {
             new HostColumnVector.BasicType(false, DType.INT64));
         HostColumnVector.DataType resultType =
             new HostColumnVector.ListType(false, childType);
+
         try (HostColumnVector fixedTransitions = HostColumnVector.fromLists(resultType, masterTransitions.toArray(new List[0]))) {
           try (HostColumnVector zoneIdVector = HostColumnVector.fromStrings(zondIdList.toArray(new String[0]))) {
-            fixedTransitionsFuture.complete(fixedTransitions.incRefCount());
-            zoneIdVectorFuture.complete(zoneIdVector.incRefCount());
+            try (HostColumnVector specialTzVector = HostColumnVector.fromStrings(SPECIAL_TZ_LITERALS)) {
+              fixedTransitionsFuture.complete(fixedTransitions.incRefCount());
+              zoneIdVectorFuture.complete(zoneIdVector.incRefCount());
+              specialTzLiteralsFuture.complete(specialTzVector.incRefCount());
+            }
           }
         }
       } catch (Exception e) {
         fixedTransitionsFuture.completeExceptionally(e);
         zoneIdToTableFuture.completeExceptionally(e);
         zoneIdVectorFuture.completeExceptionally(e);
+        specialTzLiteralsFuture.completeExceptionally(e);
         throw e;
       }
     }
@@ -295,7 +305,7 @@ public class GpuTimeZoneDB {
     }
   }
 
-  private Map<String, Integer> getZoneIDMap() {
+  public Map<String, Integer> getZoneIDMap() {
     try {
       return zoneIdToTableFuture.get(TIMEOUT_SECS, TimeUnit.SECONDS);
     } catch (InterruptedException | ExecutionException | TimeoutException e) {
@@ -303,7 +313,7 @@ public class GpuTimeZoneDB {
     }
   }
 
-  private ColumnVector getZoneIDVector() {
+  public ColumnVector getZoneIDVector() {
     try (HostColumnVector hcv = zoneIdVectorFuture.get(TIMEOUT_SECS, TimeUnit.SECONDS)) {
       return hcv.copyToDevice();
     } catch (InterruptedException | ExecutionException | TimeoutException e) {
@@ -311,7 +321,15 @@ public class GpuTimeZoneDB {
     }
   }
 
-  private Table getTransitions() {
+  public ColumnVector getSpecialTzVector() {
+    try (HostColumnVector hcv = specialTzLiteralsFuture.get(TIMEOUT_SECS, TimeUnit.SECONDS)) {
+      return hcv.copyToDevice();
+    } catch (InterruptedException | ExecutionException | TimeoutException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  public Table getTransitions() {
     try (ColumnVector fixedTransitions = getFixedTransitions()) {
       return new Table(fixedTransitions);
     }
