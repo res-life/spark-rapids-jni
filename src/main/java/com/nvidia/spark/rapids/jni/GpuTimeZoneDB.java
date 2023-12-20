@@ -314,7 +314,8 @@ public class GpuTimeZoneDB {
   }
 
   public ColumnVector getZoneIDVector() {
-    try (HostColumnVector hcv = zoneIdVectorFuture.get(TIMEOUT_SECS, TimeUnit.SECONDS)) {
+    try {
+      HostColumnVector hcv = zoneIdVectorFuture.get(TIMEOUT_SECS, TimeUnit.SECONDS);
       return hcv.copyToDevice();
     } catch (InterruptedException | ExecutionException | TimeoutException e) {
       throw new RuntimeException(e);
@@ -322,7 +323,8 @@ public class GpuTimeZoneDB {
   }
 
   public ColumnVector getSpecialTzVector() {
-    try (HostColumnVector hcv = specialTzLiteralsFuture.get(TIMEOUT_SECS, TimeUnit.SECONDS)) {
+    try {
+      HostColumnVector hcv = specialTzLiteralsFuture.get(TIMEOUT_SECS, TimeUnit.SECONDS);
       return hcv.copyToDevice();
     } catch (InterruptedException | ExecutionException | TimeoutException e) {
       throw new RuntimeException(e);

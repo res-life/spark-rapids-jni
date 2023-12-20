@@ -68,9 +68,9 @@ namespace spark_rapids_jni {
  * @returns a timestamp column and a bool column. Bool column is empty if ansi mode is false, not
  * empty otherwise.
  */
-std::pair<std::unique_ptr<cudf::column>, bool> string_to_timestamp(
+std::pair<std::unique_ptr<cudf::column>, bool> string_to_timestamp_with_tz(
     cudf::strings_column_view const& input,
-    cudf::table_view const& transitions,
+    cudf::column_view const& transitions,
     cudf::strings_column_view tz_indices,
     cudf::strings_column_view special_datetime_lit,
     cudf::size_type default_tz_index,

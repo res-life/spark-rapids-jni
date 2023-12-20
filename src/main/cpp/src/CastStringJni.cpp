@@ -61,7 +61,7 @@ extern "C" {
 
 JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_CastStrings_toInteger(
   JNIEnv* env, jclass, jlong input_column, jboolean ansi_enabled, jboolean strip, jint j_dtype)
-{string_to_timestamp
+{
   JNI_NULL_CHECK(env, input_column, "input column is null", 0);
 
   try {
@@ -257,22 +257,21 @@ JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_CastStrings_fromInteger
   CATCH_CAST_EXCEPTION(env, 0);
 }
 
-JNIEXPORT jlong JNICALL
-Java_com_nvidia_spark_rapids_jni_CastStrings_toTimestamp(JNIEnv* env,
-                                                         jclass,
-                                                         jlong input_column,
-                                                         jlong transitions_handle,
-                                                         jlong tz_indices_col,
-                                                         jlong special_dt_lit_col,
-                                                         jint tz_default_index,
-                                                         jboolean ansi_enabled)
+JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_CastStrings_toTimestamp(JNIEnv *env,
+                                                                                 jclass,
+                                                                                 jlong input_column,
+                                                                                 jlong transitions_handle,
+                                                                                 jlong tz_indices_col,
+                                                                                 jlong special_dt_lit_col,
+                                                                                 jint tz_default_index,
+                                                                                 jboolean ansi_enabled)
 {
   JNI_NULL_CHECK(env, input_column, "input column is null", 0);
   try {
     cudf::jni::auto_set_device(env);
 
     auto const &input_view = cudf::strings_column_view(*reinterpret_cast<cudf::column_view const *>(input_column));
-    auto const &transitions = *reinterpret_cast<cudf::table_view const *>(transitions_handle);
+    auto const transitions = reinterpret_cast<cudf::table_view const *>(transitions_handle)->column(0);
     auto const &tz_indices_view = cudf::strings_column_view(
         *reinterpret_cast<cudf::column_view const *>(tz_indices_col));
     auto const &special_dt_lit_view = cudf::strings_column_view(
@@ -280,7 +279,7 @@ Java_com_nvidia_spark_rapids_jni_CastStrings_toTimestamp(JNIEnv* env,
 
     auto const tz_index = static_cast<cudf::size_type>(tz_default_index);
 
-    auto [ret_cv, success] = spark_rapids_jni::string_to_timestamp(
+    auto [ret_cv, success] = spark_rapids_jni::string_to_timestamp_with_tz(
       input_view, transitions, tz_indices_view, special_dt_lit_view, tz_index, ansi_enabled);
     if (success) { return cudf::jni::release_as_jlong(ret_cv); }
   }

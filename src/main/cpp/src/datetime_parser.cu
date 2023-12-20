@@ -31,7 +31,7 @@
 #include <cudf/lists/lists_column_device_view.cuh>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/string_view.cuh>
-#include <cudf/strings/strings_column_view.hpp>
+
 #include <cudf/reduction.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -70,29 +70,6 @@ struct timestamp_components {
   int8_t second;
   int32_t microseconds;
 };
-
-/**
- * Convert a local time in a time zone to a UTC timestamp
- */
-__device__ __host__ thrust::tuple<cudf::timestamp_us, bool> to_utc_timestamp(
-  timestamp_components const& components, cudf::string_view const& time_zone)
-{
-  // TODO replace the following fake implementation
-  long seconds = components.year * 365L * 86400L + components.month * 30L * 86400L +
-                 components.day * 86400L + components.hour * 3600L + components.minute * 60L +
-                 components.second;
-  long us = seconds * 1000000L + components.microseconds;
-  return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{us}}, true);
-}
-
-/**
- * Convert a local time in a time zone to a UTC timestamp
- */
-__device__ __host__ thrust::tuple<cudf::timestamp_us, bool> to_utc_timestamp(
-  timestamp_components const& components)
-{
-  return to_utc_timestamp(components, cudf::string_view("UTC", 3));
-}
 
 /**
  * Is white space
@@ -294,7 +271,7 @@ struct parse_timestamp_string_fn {
     int current_segment_digits = 0;
     size_t j = 0;
     int digits_milli = 0;
-    bool just_time = false;
+    // bool just_time = false;
     thrust::optional<int> year_sign;
     if ('-' == bytes[j] || '+' == bytes[j]) {
       if ('-' == bytes[j]) {
@@ -310,22 +287,18 @@ struct parse_timestamp_string_fn {
       int parsed_value = static_cast<int32_t>(b - '0');
       if (parsed_value < 0 || parsed_value > 9) {
         if (0 == j && 'T' == b) {
-          just_time = true;
+          // just_time = true;
           i += 3;
         } else if (i < 2) {
           if (b == '-') {
-            if (!is_valid_digits(i, current_segment_digits)) {
-              return false;
-            }
+            if (!is_valid_digits(i, current_segment_digits)) { return false; }
             segments[i] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
             i += 1;
           } else if (0 == i && ':' == b && !year_sign.has_value()) {
-            just_time = true;
-            if (!is_valid_digits(3, current_segment_digits)) {
-              return false;
-            }
+            // just_time = true;
+            if (!is_valid_digits(3, current_segment_digits)) { return false; }
             segments[3] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
@@ -335,9 +308,7 @@ struct parse_timestamp_string_fn {
           }
         } else if (2 == i) {
           if (' ' == b || 'T' == b) {
-            if (!is_valid_digits(i, current_segment_digits)) {
-              return false;
-            }
+            if (!is_valid_digits(i, current_segment_digits)) { return false; }
             segments[i] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
@@ -347,9 +318,7 @@ struct parse_timestamp_string_fn {
           }
         } else if (3 == i || 4 == i) {
           if (':' == b) {
-            if (!is_valid_digits(i, current_segment_digits)) {
-              return false;
-            }
+            if (!is_valid_digits(i, current_segment_digits)) { return false; }
             segments[i] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
@@ -359,17 +328,13 @@ struct parse_timestamp_string_fn {
           }
         } else if (5 == i || 6 == i) {
           if ('.' == b && 5 == i) {
-            if (!is_valid_digits(i, current_segment_digits)) {
-              return false;
-            }
+            if (!is_valid_digits(i, current_segment_digits)) { return false; }
             segments[i] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
             i += 1;
           } else {
-            if (!is_valid_digits(i, current_segment_digits) || !allow_tz_in_date_str) {
-              return false;
-            }
+            if (!is_valid_digits(i, current_segment_digits) || !allow_tz_in_date_str) { return false; }
             segments[i] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
@@ -381,9 +346,7 @@ struct parse_timestamp_string_fn {
           if (i == 6 && '.' != b) { i += 1; }
         } else {
           if (i < segments_len && (':' == b || ' ' == b)) {
-            if (!is_valid_digits(i, current_segment_digits)) {
-              return false;
-            }
+            if (!is_valid_digits(i, current_segment_digits)) { return false; }
             segments[i] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
@@ -439,7 +402,7 @@ std::pair<std::unique_ptr<cudf::column>, bool> to_timestamp(
   bool ansi_mode,
   bool allow_tz_in_date_str = true,
   size_type default_tz_index = 1000000000,
-  table_view const *transitions = nullptr,
+  cudf::column_view const *transitions = nullptr,
   cudf::strings_column_view const *tz_indices = nullptr)
 {
   auto const stream = cudf::get_default_stream();
@@ -475,7 +438,7 @@ std::pair<std::unique_ptr<cudf::column>, bool> to_timestamp(
                                          default_tz_index,
                                          allow_tz_in_date_str});
   } else {
-    auto const ft_cdv_ptr = column_device_view::create(transitions->column(0), stream);
+    auto const ft_cdv_ptr = column_device_view::create(*transitions, stream);
     auto const d_transitions = lists_column_device_view{*ft_cdv_ptr};
     auto d_tz_indices = cudf::column_device_view::create(tz_indices->parent(), stream);
 
@@ -516,9 +479,9 @@ namespace spark_rapids_jni {
  * Returns a pair of timestamp column and a bool indicates whether successed.
  * If does not have time zone in string, use the default time zone.
  */
-std::pair<std::unique_ptr<cudf::column>, bool> string_to_timestamp(
+std::pair<std::unique_ptr<cudf::column>, bool> string_to_timestamp_with_tz(
   cudf::strings_column_view const& input,
-  cudf::table_view const& transitions,
+  cudf::column_view const& transitions,
   cudf::strings_column_view const& tz_indices,
   cudf::strings_column_view const& special_datetime_lit,
   cudf::size_type default_tz_index,
@@ -545,7 +508,7 @@ std::pair<std::unique_ptr<cudf::column>, bool> string_to_timestamp_without_time_
   if (input.size() == 0) {
     return std::make_pair(cudf::make_empty_column(cudf::type_id::TIMESTAMP_MICROSECONDS), true);
   }
-  return to_timestamp(input, special_datetime_lit, ansi_mode,allow_time_zone);
+  return to_timestamp(input, special_datetime_lit, ansi_mode, allow_time_zone);
 }
 
 }  // namespace spark_rapids_jni
