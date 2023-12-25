@@ -42,7 +42,9 @@ using micros_col =
 
 class TimeZoneTest : public cudf::test::BaseFixture {
  protected:
-  void SetUp() override { transitions = make_transitions_table(); }
+  void SetUp() override {
+    transitions = make_transitions_table();
+  }
   std::unique_ptr<cudf::table> transitions;
 
  private:
