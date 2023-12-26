@@ -180,6 +180,7 @@ public class GpuTimeZoneDB {
         Map<String, Integer> zoneIdToTable = new HashMap<>();
         List<List<HostColumnVector.StructData>> masterTransitions = new ArrayList<>();
         List<String> zondIdList = new ArrayList<>();
+        List<String> unsupportedZoneList = new ArrayList<>();
 
         for (String tzId : TimeZone.getAvailableIDs()) {
           ZoneId zoneId;
@@ -194,6 +195,7 @@ public class GpuTimeZoneDB {
           ZoneRules zoneRules = zoneId.getRules();
           // Filter by non-repeating rules
           if (!zoneRules.isFixedOffset() && !zoneRules.getTransitionRules().isEmpty()) {
+            unsupportedZoneList.add(zoneId.getId());
             continue;
           }
           if (!zoneIdToTable.containsKey(zoneId.getId())) {
@@ -265,6 +267,8 @@ public class GpuTimeZoneDB {
             new HostColumnVector.BasicType(false, DType.INT64));
         HostColumnVector.DataType resultType =
             new HostColumnVector.ListType(false, childType);
+
+        zondIdList.addAll(unsupportedZoneList);
 
         try (HostColumnVector fixedTransitions = HostColumnVector.fromLists(resultType, masterTransitions.toArray(new List[0]))) {
           try (HostColumnVector zoneIdVector = HostColumnVector.fromStrings(zondIdList.toArray(new String[0]))) {

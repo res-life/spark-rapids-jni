@@ -71,8 +71,8 @@ namespace spark_rapids_jni {
 std::pair<std::unique_ptr<cudf::column>, bool> string_to_timestamp_with_tz(
     cudf::strings_column_view const& input,
     cudf::column_view const& transitions,
-    cudf::strings_column_view tz_indices,
-    cudf::strings_column_view special_datetime_lit,
+    cudf::strings_column_view const& tz_indices,
+    cudf::strings_column_view const& special_datetime_lit,
     cudf::size_type default_tz_index,
     bool ansi_mode);
 

@@ -16,9 +16,10 @@
 
 #include "datetime_parser.hpp"
 
+#include <iostream>
 #include <vector>
 
-#include <iostream>
+#include <cuda/std/cassert>
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
@@ -43,6 +44,7 @@
 
 #include <thrust/binary_search.h>
 #include <thrust/iterator/counting_iterator.h>
+#include <thrust/logical.h>
 #include <thrust/optional.h>
 #include <thrust/transform.h>
 #include <thrust/tuple.h>
@@ -120,6 +122,12 @@ __device__ __host__ bool is_valid_digits(int segment, int digits)
      (segment != 0 && segment != 6 && segment != 7 && digits > 0 && digits <= 2);
 }
 
+enum ParseResult {
+  OK = 0,
+  INVALID = 1,
+  UNSUPPORTED = 2
+};
+
 template <bool with_timezone>
 struct parse_timestamp_string_fn {
   column_device_view const d_strings;
@@ -132,10 +140,10 @@ struct parse_timestamp_string_fn {
   thrust::optional<lists_column_device_view const> transitions = thrust::nullopt;
   thrust::optional<column_device_view const> tz_indices = thrust::nullopt;
 
-  __device__ thrust::tuple<cudf::timestamp_us, bool> operator()(const cudf::size_type& idx) const
+  __device__ thrust::tuple<cudf::timestamp_us, uint8_t> operator()(const cudf::size_type& idx) const
   {
     if (!d_strings.is_valid(idx)) {
-      return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, false);
+      return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, ParseResult::INVALID);
     }
 
     auto const d_str = d_strings.element<cudf::string_view>(idx);
@@ -143,14 +151,20 @@ struct parse_timestamp_string_fn {
     timestamp_components ts_comp{};
     char const * tz_lit_ptr = nullptr;
     size_type tz_lit_len = 0;
-    if (!parse_string_to_timestamp_us(&ts_comp, &tz_lit_ptr, &tz_lit_len, d_str)) {
-      return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, false);
+    switch (parse_string_to_timestamp_us(&ts_comp, &tz_lit_ptr, &tz_lit_len, d_str)) {
+      case ParseResult::INVALID:
+        return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, ParseResult::INVALID);
+      case ParseResult::UNSUPPORTED:
+        return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, ParseResult::UNSUPPORTED);
+      case ParseResult::OK:
+      default:
+        break;
     }
 
     if constexpr (!with_timezone) {
       // path without timezone, in which unix_timestamp is straightforwardly computed
       auto const ts_unaligned = compute_epoch_us(ts_comp);
-      return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{ts_unaligned}}, true);
+      return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{ts_unaligned}}, ParseResult::OK);
     }
     // path with timezone, in which timezone offset has to be determined before computing unix_timestamp
     int tz_index;
@@ -158,15 +172,17 @@ struct parse_timestamp_string_fn {
       tz_index = default_tz_index;
     } else {
       tz_index = parse_time_zone(string_view(tz_lit_ptr, tz_lit_len));
-      if (tz_index == tz_indices->size()) {
-        return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, false);
+      if (tz_index > transitions->size()) {
+        if (tz_index == tz_indices->size())
+          return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, ParseResult::INVALID);
+        return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, ParseResult::UNSUPPORTED);
       }
     }
     auto const loose_epoch = compute_loose_epoch_s(ts_comp);
-    auto const tz_offset = extract_timezone_offset(loose_epoch, tz_index);
+    auto const tz_offset = extract_timezone_offset(loose_epoch, tz_index) * 1000000L;
     auto const ts_unaligned = compute_epoch_us(ts_comp);
 
-    return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{ts_unaligned - tz_offset}}, true);
+    return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{ts_unaligned - tz_offset}}, ParseResult::OK);
   }
 
   __device__ inline int parse_time_zone(string_view const &tz_lit) const
@@ -179,6 +195,7 @@ struct parse_timestamp_string_fn {
                                thrust::make_counting_iterator(0),
                                thrust::make_counting_iterator(tz_indices->size()),
                                predicate);
+
     return *ret;
   }
 
@@ -229,13 +246,13 @@ struct parse_timestamp_string_fn {
    * Parse a string with time zone to a timestamp.
    * The bool in the returned tuple is false if the parse failed.
    */
-  __device__ inline bool parse_string_to_timestamp_us(
+  __device__ inline ParseResult parse_string_to_timestamp_us(
       timestamp_components *ts_comp,
       char const **parsed_tz_ptr,
       size_type *parsed_tz_length,
       cudf::string_view const &timestamp_str) const {
 
-    if (timestamp_str.empty()) { return false; }
+    if (timestamp_str.empty()) { return ParseResult::INVALID; }
 
     const char *curr_ptr = timestamp_str.data();
     const char *end_ptr = curr_ptr + timestamp_str.size_bytes();
@@ -249,17 +266,17 @@ struct parse_timestamp_string_fn {
       --end_ptr;
     }
 
-    // special strings: epoch, now, today, yesterday, tomorrow
+    // TODO: support special dates [epoch, now, today, yesterday, tomorrow]
     for (size_type i = 0; i < special_datetime_names.size(); i++) {
       auto const& ref = special_datetime_names.element<string_view>(i);
       if (equals_ascii_ignore_case(curr_ptr, end_ptr, ref.data(), ref.data() + ref.size_bytes())) {
         *parsed_tz_ptr = ref.data();
         *parsed_tz_length = ref.size_bytes();
-        return true;
+        return ParseResult::UNSUPPORTED;
       }
     }
 
-    if (curr_ptr == end_ptr) { return false; }
+    if (curr_ptr == end_ptr) { return ParseResult::INVALID; }
 
     const char *const bytes = curr_ptr;
     const size_type bytes_length = end_ptr - curr_ptr;
@@ -291,68 +308,70 @@ struct parse_timestamp_string_fn {
           i += 3;
         } else if (i < 2) {
           if (b == '-') {
-            if (!is_valid_digits(i, current_segment_digits)) { return false; }
+            if (!is_valid_digits(i, current_segment_digits)) { return ParseResult::INVALID; }
             segments[i] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
             i += 1;
           } else if (0 == i && ':' == b && !year_sign.has_value()) {
             // just_time = true;
-            if (!is_valid_digits(3, current_segment_digits)) { return false; }
+            if (!is_valid_digits(3, current_segment_digits)) { return ParseResult::INVALID; }
             segments[3] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
             i = 4;
           } else {
-            return false;
+            return ParseResult::INVALID;
           }
         } else if (2 == i) {
           if (' ' == b || 'T' == b) {
-            if (!is_valid_digits(i, current_segment_digits)) { return false; }
+            if (!is_valid_digits(i, current_segment_digits)) { return ParseResult::INVALID; }
             segments[i] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
             i += 1;
           } else {
-            return false;
+            return ParseResult::INVALID;
           }
         } else if (3 == i || 4 == i) {
           if (':' == b) {
-            if (!is_valid_digits(i, current_segment_digits)) { return false; }
+            if (!is_valid_digits(i, current_segment_digits)) { return ParseResult::INVALID; }
             segments[i] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
             i += 1;
           } else {
-            return false;
+            return ParseResult::INVALID;
           }
         } else if (5 == i || 6 == i) {
           if ('.' == b && 5 == i) {
-            if (!is_valid_digits(i, current_segment_digits)) { return false; }
+            if (!is_valid_digits(i, current_segment_digits)) { return ParseResult::INVALID; }
             segments[i] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
             i += 1;
           } else {
-            if (!is_valid_digits(i, current_segment_digits) || !allow_tz_in_date_str) { return false; }
+            if (!is_valid_digits(i, current_segment_digits) || !allow_tz_in_date_str) { return ParseResult::INVALID; }
             segments[i] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
             i += 1;
             *parsed_tz_ptr = bytes + j;
-            *parsed_tz_length = bytes_length - j;
-            j = bytes_length - 1;
+            // strip the whitespace between timestamp and timezone
+            while (*parsed_tz_ptr < end_ptr && is_whitespace(**parsed_tz_ptr)) ++(*parsed_tz_ptr);
+            *parsed_tz_length = end_ptr - *parsed_tz_ptr;
+            break;
           }
           if (i == 6 && '.' != b) { i += 1; }
         } else {
           if (i < segments_len && (':' == b || ' ' == b)) {
-            if (!is_valid_digits(i, current_segment_digits)) { return false; }
+            if (!is_valid_digits(i, current_segment_digits)) { return ParseResult::INVALID; }
             segments[i] = current_segment_value;
             current_segment_value = 0;
             current_segment_digits = 0;
             i += 1;
           } else {
-            return false;
+            return ParseResult::INVALID;
           }
         }
       } else {
@@ -367,7 +386,7 @@ struct parse_timestamp_string_fn {
       j += 1;
     }
 
-    if (!is_valid_digits(i, current_segment_digits)) { return false; }
+    if (!is_valid_digits(i, current_segment_digits)) { return ParseResult::INVALID; }
     segments[i] = current_segment_value;
 
     while (digits_milli < 6) {
@@ -387,7 +406,7 @@ struct parse_timestamp_string_fn {
     ts_comp->second = static_cast<int8_t>(segments[5]);
     ts_comp->microseconds = segments[6];
 
-    return true;
+    return ParseResult::OK;
   }
 };
 
@@ -419,7 +438,7 @@ std::pair<std::unique_ptr<cudf::column>, bool> to_timestamp(
                                   mr);
   // record which string is failed to parse.
   auto result_valid_col =
-      cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::BOOL8},
+      cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::UINT8},
                                     input.size(),
                                     cudf::mask_state::UNALLOCATED,
                                     stream,
@@ -432,7 +451,7 @@ std::pair<std::unique_ptr<cudf::column>, bool> to_timestamp(
         thrust::make_counting_iterator(input.size()),
         thrust::make_zip_iterator(
             thrust::make_tuple(result_col->mutable_view().begin<cudf::timestamp_us>(),
-                               result_valid_col->mutable_view().begin<bool>())),
+                               result_valid_col->mutable_view().begin<uint8_t>())),
         parse_timestamp_string_fn<false>{*d_strings,
                                          *d_special_datetime_lit,
                                          default_tz_index,
@@ -448,7 +467,7 @@ std::pair<std::unique_ptr<cudf::column>, bool> to_timestamp(
         thrust::make_counting_iterator(input.size()),
         thrust::make_zip_iterator(
             thrust::make_tuple(result_col->mutable_view().begin<cudf::timestamp_us>(),
-                               result_valid_col->mutable_view().begin<bool>())),
+                               result_valid_col->mutable_view().begin<uint8_t>())),
         parse_timestamp_string_fn<true>{*d_strings,
                                         *d_special_datetime_lit,
                                         default_tz_index,
@@ -458,8 +477,20 @@ std::pair<std::unique_ptr<cudf::column>, bool> to_timestamp(
   }
 
   auto valid_view = result_valid_col->mutable_view();
+
+  auto exception_exists = thrust::any_of(
+    rmm::exec_policy(stream),
+    valid_view.begin<uint8_t>(),
+    valid_view.end<uint8_t>(),
+    []__device__(uint8_t e) { return e == ParseResult::UNSUPPORTED; });
+  if (exception_exists) {
+    CUDF_FAIL("There exists unsupported timestamp schema!");
+  }
+
   auto [valid_bitmask, valid_null_count] = cudf::detail::valid_if(
-      valid_view.begin<bool>(), valid_view.end<bool>(), thrust::identity<bool>{}, stream, mr);
+      valid_view.begin<uint8_t>(), valid_view.end<uint8_t>(),
+      [] __device__(uint8_t e) { return e == 0; },
+      stream, mr);
 
   if (ansi_mode && input.null_count() < valid_null_count) {
     // has invalid value in validity column under ansi mode

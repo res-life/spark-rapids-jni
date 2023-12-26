@@ -23,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.fail;
 import java.time.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -380,7 +382,7 @@ public class CastStringsTest {
 //   }
 //
   @Test
-  void toTimestampTestAnsi() {
+  void toTimestampTestAnsiWithoutTz() {
 //     assertThrows(IllegalArgumentException.class, () -> {
 //       try (ColumnVector input = ColumnVector.fromStrings(" invalid_value ")) {
 //         // ansiEnabled is true
@@ -404,13 +406,32 @@ public class CastStringsTest {
         ColumnVector actual = CastStrings.toTimestampWithoutTimeZone(input, false, true)) {
       AssertUtils.assertColumnsAreEqual(expected, actual);
     }
+  }
 
-    try (
-        ColumnVector input = ColumnVector.fromStrings("2023-11-05T03:04:55 Asia/Shanghai");
-        ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(1248898672L);
-        ColumnVector actual = CastStrings.toTimestamp(input, ZoneId.of("UTC"), true)) {
-      AssertUtils.assertColumnsAreEqual(expected, actual);
+  @Test
+  void toTimestampTestAnsiWithTz() {
+
+    Map<String, Long> entries = new HashMap<String, Long>(){{
+      put("2023-11-05 3:4:55 America/Sao_Paulo", 1699164295000000L);
+      put("2023-11-5T03:04:55.1   Asia/Shanghai", 1699124695100000L);
+      put("2000-1-29 13:59:8 Iran", 949141748000000L);
+      put("  2000-01-29 ", 949104000000000L);
+      put("2000-01-29 Iran", null);
+      put("2000-01-29 10:20:30 Asia/London", null);
+      // put("2000-01-29 1:2:3 Europe/London", null); UNSUPPORTED
+    }};
+    List<String> inputs = new ArrayList<>();
+    List<Long> expects = new ArrayList<>();
+    for (Map.Entry<String, Long> entry : entries.entrySet()) {
+      inputs.add(entry.getKey());
+      expects.add(entry.getValue());
     }
 
+    try (
+        ColumnVector input = ColumnVector.fromStrings(inputs.toArray(new String[0]));
+        ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(expects.toArray(new Long[0]));
+        ColumnVector actual = CastStrings.toTimestamp(input, ZoneId.of("UTC"), false)) {
+      AssertUtils.assertColumnsAreEqual(expected, actual);
+    }
   }
 }
