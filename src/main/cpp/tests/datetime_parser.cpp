@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-#include "datetime_parser.hpp"
-#include "timezones.cpp"
-
 #include <cassert>
 #include <cstring>
+
+#include <datetime_parser.hpp>
+
+//
 
 #include <cudf/strings/convert/convert_datetime.hpp>
 #include <cudf/strings/convert/convert_durations.hpp>
@@ -34,56 +35,7 @@ using timestamp_col =
   cudf::test::fixed_width_column_wrapper<cudf::timestamp_us, cudf::timestamp_us::rep>;
 using micros_col =
   cudf::test::fixed_width_column_wrapper<cudf::timestamp_us, cudf::timestamp_us::rep>;
-struct DateTimeParserTest : public cudf::test::BaseFixture {
-protected:
-  void SetUp() override {
-    transitions = make_transitions_table();
-  }
-  std::unique_ptr<cudf::table> transitions;
-  std::unique_ptr<cudf::column> tz_indices;
-  std::unique_ptr<cudf::column> special_tz;
-
-private:
-  std::unique_ptr<cudf::table> make_transitions_table()
-  {
-    auto instants_from_utc_col = int64_col({int64_min,
-                                            int64_min,
-                                            -1585904400L,
-                                            -933667200L,
-                                            -922093200L,
-                                            -908870400L,
-                                            -888829200L,
-                                            -650019600L,
-                                            515527200L,
-                                            558464400L,
-                                            684867600L});
-    auto instants_to_utc_col   = int64_col({int64_min,
-                                            int64_min,
-                                            -1585904400L,
-                                            -933634800L,
-                                            -922064400L,
-                                            -908838000L,
-                                            -888796800L,
-                                            -649990800L,
-                                            515559600L,
-                                            558493200L,
-                                            684896400L});
-    auto utc_offsets_col =
-        int32_col({18000, 29143, 28800, 32400, 28800, 32400, 28800, 28800, 32400, 28800, 28800});
-    auto struct_column = cudf::test::structs_column_wrapper{
-        {instants_from_utc_col, instants_to_utc_col, utc_offsets_col},
-        {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}};
-    auto offsets       = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 11};
-    auto list_nullmask = std::vector<bool>(1, 1);
-    auto [null_mask, null_count] =
-        cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end());
-    auto list_column = cudf::make_lists_column(
-        2, offsets.release(), struct_column.release(), null_count, std::move(null_mask));
-    auto columns = std::vector<std::unique_ptr<cudf::column>>{};
-    columns.push_back(std::move(list_column));
-    return std::make_unique<cudf::table>(std::move(columns));
-  }
-};
+struct DateTimeParserTest : public cudf::test::BaseFixture {};
 
 TEST_F(DateTimeParserTest, ParseTimestamp)
 {
@@ -174,6 +126,7 @@ TEST_F(DateTimeParserTest, ParseTimestamp)
       0,  // null bit
       0,  // null bit
       0   // null bit
+
     });
   auto ret =
     spark_rapids_jni::string_to_timestamp(cudf::strings_column_view(ts_strings), "Z", true, false);

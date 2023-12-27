@@ -166,26 +166,110 @@ struct parse_timestamp_string_fn {
       auto const ts_unaligned = compute_epoch_us(ts_comp);
       return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{ts_unaligned}}, ParseResult::OK);
     }
+  
     // path with timezone, in which timezone offset has to be determined before computing unix_timestamp
-    int tz_index;
+    int64_t tz_offset;
     if (tz_lit_ptr == nullptr) {
-      tz_index = default_tz_index;
+      tz_offset = extract_timezone_offset(compute_loose_epoch_s(ts_comp), default_tz_index);
     } else {
-      tz_index = parse_time_zone(string_view(tz_lit_ptr, tz_lit_len));
-      if (tz_index > transitions->size()) {
-        if (tz_index == tz_indices->size())
-          return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, ParseResult::INVALID);
-        return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, ParseResult::UNSUPPORTED);
+      auto tz_view = string_view(tz_lit_ptr, tz_lit_len);
+      if (auto [utc_offset, ret_code] = parse_utc_like_tz(tz_view); ret_code == 0) {
+        tz_offset = utc_offset;
+      } else if (ret_code == 1) {
+        auto tz_index = query_index_from_tz_db(tz_view);
+        if (tz_index > transitions->size()) {
+          if (tz_index == tz_indices->size())
+            return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, ParseResult::INVALID);
+          return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, ParseResult::UNSUPPORTED);
+        }
+        tz_offset = extract_timezone_offset(compute_loose_epoch_s(ts_comp), tz_index);
+      } else {
+        return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{0}}, ParseResult::INVALID);
       }
     }
-    auto const loose_epoch = compute_loose_epoch_s(ts_comp);
-    auto const tz_offset = extract_timezone_offset(loose_epoch, tz_index) * 1000000L;
+
     auto const ts_unaligned = compute_epoch_us(ts_comp);
 
-    return thrust::make_tuple(cudf::timestamp_us{cudf::duration_us{ts_unaligned - tz_offset}}, ParseResult::OK);
+    return thrust::make_tuple(
+        cudf::timestamp_us{cudf::duration_us{ts_unaligned - tz_offset * 1000000L}},
+        ParseResult::OK);
   }
 
-  __device__ inline int parse_time_zone(string_view const &tz_lit) const
+  // TODO: support CST/PST/AST
+  __device__ inline thrust::pair<int64_t, uint8_t> parse_utc_like_tz(string_view const &tz_lit) const
+  {
+    size_type len = tz_lit.size_bytes();
+
+    char const *ptr = tz_lit.data();
+
+    if (*ptr == 'Z') {
+      if (len > 1) return {0, 1};
+      return {0, 0};
+    }
+
+    size_t char_offset = 0;
+
+    if (len > 2
+        && ((*ptr == 'G' && *(ptr + 1) == 'M' && *(ptr + 2) == 'T')
+        || (*ptr == 'U' && *(ptr + 1) == 'T' && *(ptr + 2) == 'C'))) {
+      char_offset = 3;
+    }
+
+    if (len == char_offset) return {0, 0};
+
+    char const sign_char = *(ptr + char_offset++);
+    int64_t sign;
+    if (sign_char == '+') {
+      sign = 1L;
+    } else if (sign_char == '-') {
+      sign = -1L;
+    } else {
+      return {0, char_offset < 3 ? 1 : 2};
+    }
+
+    int64_t hms[3] = {0L, 0L, 0L};
+    bool has_colon = false;
+    bool one_digit_mm = false;
+    for (size_type i = 0; i < 3; i++) {
+      if (i == 2 && one_digit_mm) return {0, 2};
+
+      hms[i] = *(ptr + char_offset++) - '0';
+      if (hms[i] < 0 || hms[i] > 9) return {0, 2};
+
+      if (len == char_offset) {
+        if (i > 0) {
+          if (!has_colon) return {0, 2};
+          one_digit_mm = true;
+        }
+        break;
+      }
+
+      if (*(ptr + char_offset) == ':') {
+        if (len == ++char_offset) break;
+        has_colon = true;
+        continue;
+      }
+
+      auto digit = *(ptr + char_offset++) - '0';
+      if (digit < 0 || digit > 9) return {0, 2};
+      hms[i] = hms[i] * 10 + digit;
+
+      if (len == char_offset) break;
+      if (*(ptr + char_offset) == ':') {
+        if (len == ++char_offset) break;
+        has_colon = true;
+        continue;
+      }
+      if (has_colon) return {0, 2};
+    }
+
+    if (hms[0] > 18 || hms[1] > 59 || hms[2] > 59) return {0, 2};
+    if (hms[0] == 18 && hms[1] + hms[2] > 0) return {0, 2};
+
+    return {sign * (hms[0] * 3600L + hms[1] * 60L + hms[2]), 0};
+  }
+
+  __device__ inline int query_index_from_tz_db(string_view const &tz_lit) const
   {
     // TODO: replace with more efficient approach (such as binary search or prefix tree)
     auto predicate = [tz = tz_indices, &tz_lit] __device__(auto const i) {
