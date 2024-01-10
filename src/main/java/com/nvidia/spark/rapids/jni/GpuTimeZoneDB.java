@@ -249,7 +249,8 @@ public class GpuTimeZoneDB {
         HostColumnVector fixedTransitions = HostColumnVector.fromLists(resultType,
             masterTransitions.toArray(new List[0]));
         // Suppress the warnings, this host vector is a global time zone resource
-//        fixedTransitions.noWarnLeakExpected();
+        System.out.println("my debug: create one cv");
+        fixedTransitions.noWarnLeakExpected();
         fixedTransitionsFuture.complete(fixedTransitions);
         zoneIdToTableFuture.complete(zoneIdToTable);
       } catch (Exception e) {
