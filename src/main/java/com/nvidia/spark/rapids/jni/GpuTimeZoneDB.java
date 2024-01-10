@@ -264,10 +264,13 @@ public class GpuTimeZoneDB {
     if (closed) {
       return;
     }
-    try (HostColumnVector hcv = getHostFixedTransitions()) {
-      // automatically closed
-      closed = true;
+    closed = true;
+    HostColumnVector hcv = getHostFixedTransitions();
+    if (hcv != null) {
+      hcv.close();
       System.out.println("my debug: closed!!!");
+    } else {
+      System.out.println("my debug: It's null");
     }
   }
 
