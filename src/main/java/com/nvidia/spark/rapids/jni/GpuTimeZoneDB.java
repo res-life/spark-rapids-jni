@@ -41,17 +41,17 @@ public class GpuTimeZoneDB {
   // For the timezone database, we store the transitions in a ColumnVector that is a list of 
   // structs. The type of this column vector is:
   //   LIST<STRUCT<utcInstant: int64, localInstant: int64, offset: int32>>
-  private CompletableFuture<Map<String, Integer>> zoneIdToTableFuture;
-  private CompletableFuture<HostColumnVector> fixedTransitionsFuture;
+  private final CompletableFuture<Map<String, Integer>> zoneIdToTableFuture
+      = new CompletableFuture<>();
+  private final CompletableFuture<HostColumnVector> fixedTransitionsFuture
+      = new CompletableFuture<>();
 
   private boolean closed = false;
 
-  GpuTimeZoneDB() {
-    zoneIdToTableFuture = new CompletableFuture<>();
-    fixedTransitionsFuture = new CompletableFuture<>();
+  private GpuTimeZoneDB() {
   }
   
-  private static GpuTimeZoneDB instance = new GpuTimeZoneDB();
+  private static final GpuTimeZoneDB instance = new GpuTimeZoneDB();
   // This method is default visibility for testing purposes only. The instance will be never be exposed publicly
   // for this class.
   static GpuTimeZoneDB getInstance() {
@@ -68,6 +68,7 @@ public class GpuTimeZoneDB {
    */
   public static void cacheDatabase() {
     synchronized (instance) {
+      instance.closed = false;
       if (!instance.isLoaded()) {
         Executor executor = Executors.newSingleThreadExecutor(
           new ThreadFactory() {
@@ -88,10 +89,14 @@ public class GpuTimeZoneDB {
 
 
   public static void shutdown() {
-    if (instance.isLoaded()) {
-      instance.close();
-      // Recreate a new instance to reload the database if necessary
-      instance = new GpuTimeZoneDB();
+    System.out.println("my debug: in shutdown");
+    synchronized (instance) {
+      if (instance.isLoaded()) {
+        System.out.println("my debug: loaded, begin close");
+        instance.close();
+      } else {
+        System.out.println("my debug: not loaded!");
+      }
     }
   }
 
@@ -243,6 +248,8 @@ public class GpuTimeZoneDB {
             new HostColumnVector.ListType(false, childType);
         HostColumnVector fixedTransitions = HostColumnVector.fromLists(resultType,
             masterTransitions.toArray(new List[0]));
+        // Suppress the warnings, this host vector is a global time zone resource
+//        fixedTransitions.noWarnLeakExpected();
         fixedTransitionsFuture.complete(fixedTransitions);
         zoneIdToTableFuture.complete(zoneIdToTable);
       } catch (Exception e) {
@@ -254,14 +261,13 @@ public class GpuTimeZoneDB {
   }
 
   private void close() {
-    synchronized (this) {
-      if (closed) {
-        return;
-      }
-      try (HostColumnVector hcv = getHostFixedTransitions()) {
-        // automatically closed
-        closed = true;
-      }
+    if (closed) {
+      return;
+    }
+    try (HostColumnVector hcv = getHostFixedTransitions()) {
+      // automatically closed
+      closed = true;
+      System.out.println("my debug: closed!!!");
     }
   }
 
