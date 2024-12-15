@@ -196,6 +196,7 @@ add_library(
   src/DateTimeUtilsJni.cpp
   src/DecimalUtilsJni.cpp
   src/GpuTimeZoneDBJni.cpp
+  src/HLLPPHostAggregationUtilsJni.cpp
   src/HashJni.cpp
   src/HistogramJni.cpp
   src/HostTableJni.cpp
@@ -221,6 +222,7 @@ add_library(
   src/from_json_to_structs.cu
   src/get_json_object.cu
   src/histogram.cu
+  src/hllpp_host_udf_agg.cu
   src/json_utils.cu
   src/murmur_hash.cu
   src/parse_uri.cu
