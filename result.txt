@@ -1,0 +1,84 @@
+(base) chongg@spark-chongg:~/code/spark-rapids-jni2$ ./target/jni/cmake-build/benchmarks/PARSE_URI_BENCH --json after.json
+# Devices
+
+## [0] `Quadro RTX 8000`
+* SM Version: 750 (PTX Version: 750)
+* Number of SMs: 72
+* SM Default Clock Rate: 1770 MHz
+* Global Memory: 46999 MiB Free / 48571 MiB Total
+* Global Memory Bus Peak: 672 GB/sec (384-bit DDR @7001MHz)
+* Max Shared Memory: 64 KiB/SM, 48 KiB/Block
+* L2 Cache Size: 6144 KiB
+* Maximum Active Blocks: 16/SM
+* Maximum Active Threads: 1024/SM, 1024/Block
+* Available Registers: 65536/SM, 65536/Block
+* ECC Enabled: No
+
+# Log
+
+```
+Run:  [1/2] long-to-binary [Device=0 num_rows=1000000]
+Pass: Cold: 1.957094ms GPU, 1.960689ms CPU, 6.14s total GPU, 6.20s total wall, 3136x 
+Run:  [2/2] long-to-binary [Device=0 num_rows=10000000]
+Warn: Current measurement timed out (15.01s) while over noise threshold (3.69% > 0.50%)
+Pass: Cold: 17.226332ms GPU, 17.230671ms CPU, 14.99s total GPU, 15.01s total wall, 870x 
+```
+
+# Benchmark Results
+
+## long-to-binary
+
+### [0] Quadro RTX 8000
+
+| num_rows | Samples | CPU Time  | Noise  | GPU Time  | Noise  | Total Rows  |
+|----------|---------|-----------|--------|-----------|--------|-------------|
+|  1000000 |   3136x |  1.961 ms | 24.76% |  1.957 ms | 24.76% | 976.562 KiB |
+| 10000000 |    870x | 17.231 ms |  3.69% | 17.226 ms |  3.69% |   9.537 MiB |
+
+
+
+(base) chongg@spark-chongg:~/code/spark-rapids-jni2$ ./target/jni/cmake-build/benchmarks/PARSE_URI_BENCH --json after.json
+# Devices
+
+## [0] `Quadro RTX 8000`
+* SM Version: 750 (PTX Version: 750)
+* Number of SMs: 72
+* SM Default Clock Rate: 1770 MHz
+* Global Memory: 47000 MiB Free / 48571 MiB Total
+* Global Memory Bus Peak: 672 GB/sec (384-bit DDR @7001MHz)
+* Max Shared Memory: 64 KiB/SM, 48 KiB/Block
+* L2 Cache Size: 6144 KiB
+* Maximum Active Blocks: 16/SM
+* Maximum Active Threads: 1024/SM, 1024/Block
+* Available Registers: 65536/SM, 65536/Block
+* ECC Enabled: No
+
+# Log
+
+```
+Run:  [1/2] long-to-binary [Device=0 num_rows=1000000]
+Pass: Cold: 1.369007ms GPU, 1.373306ms CPU, 4.25s total GPU, 4.32s total wall, 3104x 
+Run:  [2/2] long-to-binary [Device=0 num_rows=10000000]
+Pass: Cold: 10.507385ms GPU, 10.511737ms CPU, 0.50s total GPU, 0.51s total wall, 48x 
+```
+
+# Benchmark Results
+
+## long-to-binary
+
+### [0] Quadro RTX 8000
+
+| num_rows | Samples | CPU Time  | Noise  | GPU Time  | Noise  | Total Rows  |
+|----------|---------|-----------|--------|-----------|--------|-------------|
+|  1000000 |   3104x |  1.373 ms | 27.45% |  1.369 ms | 27.41% | 976.562 KiB |
+| 10000000 |     48x | 10.512 ms |  0.43% | 10.507 ms |  0.42% |   9.537 MiB |
+
+
+
+./target/jni/cmake-build/_deps/nvbench-src/scripts/nvbench_compare.py before.json after.json
+|  num_rows  |   Ref Time |   Ref Noise |   Cmp Time |   Cmp Noise |         Diff |   %Diff |  Status  |
+|------------|------------|-------------|------------|-------------|--------------|---------|----------|
+|  1000000   |   1.957 ms |      24.76% |   1.369 ms |      27.41% |  -588.086 us | -30.05% |   FAIL   |
+|  10000000  |  17.226 ms |       3.69% |  10.507 ms |       0.42% | -6718.947 us | -39.00% |   FAIL   |
+
+
