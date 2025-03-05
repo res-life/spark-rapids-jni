@@ -73,7 +73,7 @@ ConfigureBench(ROW_CONVERSION_BENCH
     row_conversion.cpp)
 
 ConfigureBench(STRING_TO_FLOAT_BENCH
-  cast_string_to_float.cpp)
+  cast_string_to_float.cu)
 
 ConfigureBench(LONG_TO_BINARY_STRING_BENCH
   cast_long_to_binary_string.cpp)

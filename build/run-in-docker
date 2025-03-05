@@ -43,7 +43,7 @@ SPARK_IMAGE_NAME="spark-rapids-jni-build:${CUDA_VERSION}-devel-rockylinux8"
 # ensure directories exist
 mkdir -p "$LOCAL_CCACHE_DIR" "$LOCAL_MAVEN_REPO"
 
-$DOCKER_CMD build $DOCKER_BUILD_EXTRA_ARGS -f $REPODIR/ci/Dockerfile \
+$DOCKER_CMD build --network=host $DOCKER_BUILD_EXTRA_ARGS -f $REPODIR/ci/Dockerfile \
   --build-arg CUDA_VERSION=$CUDA_VERSION \
   -t $SPARK_IMAGE_NAME \
   $REPODIR/build
@@ -60,7 +60,7 @@ else
   RUN_CMD="${@@Q}"
 fi
 
-$DOCKER_CMD run $DOCKER_GPU_OPTS $DOCKER_RUN_EXTRA_ARGS -u $(id -u):$(id -g) --rm \
+$DOCKER_CMD run --network=host $DOCKER_GPU_OPTS $DOCKER_RUN_EXTRA_ARGS -u $(id -u):$(id -g) --rm \
   -v "/etc/group:/etc/group:ro" \
   -v "/etc/passwd:/etc/passwd:ro" \
   -v "/etc/shadow:/etc/shadow:ro" \
