@@ -210,6 +210,7 @@ add_library(
   src/SparkResourceAdaptorJni.cpp
   src/SubStringIndexJni.cpp
   src/ZOrderJni.cpp
+  src/bitwise_count.cu
   src/bloom_filter.cu
   src/case_when.cu
   src/cast_decimal_to_string.cu
