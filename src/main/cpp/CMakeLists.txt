@@ -190,6 +190,7 @@ set(CUDFJNI_INCLUDE_DIRS
 
 add_library(
   spark_rapids_jni SHARED
+  src/BitwiseCountJni.cpp
   src/BloomFilterJni.cpp
   src/CaseWhenJni.cpp
   src/CastStringJni.cpp
@@ -210,6 +211,7 @@ add_library(
   src/SparkResourceAdaptorJni.cpp
   src/SubStringIndexJni.cpp
   src/ZOrderJni.cpp
+  src/bitwise_count.cu
   src/bloom_filter.cu
   src/case_when.cu
   src/cast_decimal_to_string.cu
