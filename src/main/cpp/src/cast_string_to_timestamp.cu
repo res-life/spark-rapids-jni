@@ -195,9 +195,6 @@ __device__ bool is_whitespace(char const c)
 
 __device__ bool is_leap_year(int year)
 {
-  if (year < 0) {
-    year++;  // Adjust for the proleptic Gregorian calendar
-  }
   return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 }
 
