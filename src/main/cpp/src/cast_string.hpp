@@ -138,10 +138,31 @@ std::unique_ptr<cudf::column> long_to_binary_string(
   rmm::cuda_stream_view stream,
   rmm::device_async_resource_ref mr = rmm::mr::get_current_device_resource());
 
+/**
+ * @brief Parse a string column into a intermediate column.
+ * The output column is a struct column with 7 children:
+ * - Parse Result type: 0 Success, 1 invalid e.g. year is 7 digits 1234567
+ * - UTC timestamp
+ * - Just time in the ts string. If true, then UTC ts is at year 1970-01-01
+ * - Timezone type: 0 unspecified, 1 fixed type, 2 other type, 3 invalid
+ * - Timezone offset for fixed type, only applies to fixed type
+ * - Timezone is DST, only applies to other type
+ * - Timezone index to `GpuTimeZoneDB.transitions` table
+ */
 std::unique_ptr<cudf::column> parse_timestamp_strings(
   cudf::strings_column_view const& input,
   cudf::size_type const default_tz_index,
   cudf::column_view const& tz_info,
+  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Convert a input struct column into a timestamp column.
+ * @param input is output of the `parse_timestamp_strings` function.
+ */
+std::unique_ptr<cudf::column> convert_to_timestamp(
+  cudf::column_view const& input,
+  bool is_ansi_mode,
   rmm::cuda_stream_view stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

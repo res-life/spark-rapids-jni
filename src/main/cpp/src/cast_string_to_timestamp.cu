@@ -863,6 +863,14 @@ std::unique_ptr<cudf::column> parse_ts_strings(cudf::strings_column_view const& 
     num_rows, std::move(output_columns), 0, rmm::device_buffer(), stream, mr);
 }
 
+std::unique_ptr<cudf::column> to_timestamp(cudf::strings_column_view const& input,
+                                           bool is_ansi_mode,
+                                           rmm::cuda_stream_view stream,
+                                           rmm::device_async_resource_ref mr)
+{
+  // TODO
+  return nullptr;
+}
 }  // anonymous namespace
 
 std::unique_ptr<cudf::column> parse_timestamp_strings(cudf::strings_column_view const& input,
@@ -872,6 +880,14 @@ std::unique_ptr<cudf::column> parse_timestamp_strings(cudf::strings_column_view 
                                                       rmm::device_async_resource_ref mr)
 {
   return parse_ts_strings(input, default_tz_index, tz_info, stream, mr);
+}
+
+std::unique_ptr<cudf::column> convert_to_timestamp(cudf::column_view const& input,
+                                                   bool is_ansi_mode,
+                                                   rmm::cuda_stream_view stream,
+                                                   rmm::device_async_resource_ref mr)
+{
+  return to_timestamp(input, is_ansi_mode, stream, mr);
 }
 
 }  // namespace spark_rapids_jni

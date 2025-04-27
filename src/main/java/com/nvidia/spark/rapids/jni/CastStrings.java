@@ -228,4 +228,6 @@ public class CastStrings {
 
   private static native long parseTimestampStrings(long input, int defaultTimezoneIndex,
       long timeZoneInfo);
+  private static native long convertToTimestamp(long input, boolean ansi_enabled);
+
 }
