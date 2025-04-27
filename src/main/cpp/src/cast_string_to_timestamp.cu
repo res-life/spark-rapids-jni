@@ -37,7 +37,6 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/std/cassert>
-#include <cuda/std/chrono>
 #include <thrust/binary_search.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/logical.h>
@@ -55,24 +54,13 @@ namespace spark_rapids_jni {
 
 namespace {
 
-/**
- * std::chrono::year range is [-32767 , 32767]
- * cuda::std::chrono::year_month_day gets wrong result for large year,
- * Spark support six digits year, which will cause std::chrono::year overflow,
- * then meets undefined behavior.
- */
-constexpr int64_t MAX_SUPPORTED_YEAR = 32767;
-
 enum class RESULT_TYPE : uint8_t {
   // Parse success
   SUCCESS = 0,
 
   // Parse failed, has invalid format
   // Throw exception when it's Ansi mode, or return null otherwise.
-  INVALID = 1,
-
-  // Have year > MAX_SUPPORTED_YEAR
-  NOT_SUPPORTED = 2
+  INVALID = 1
 };
 
 /**
@@ -645,15 +633,7 @@ __device__ bool is_valid(ts_segments ts, time_zone tz)
  */
 __device__ inline RESULT_TYPE to_long_check_max(ts_segments const& ts, int64_t& microseconds)
 {
-  if (ts.year > MAX_SUPPORTED_YEAR || ts.year < -MAX_SUPPORTED_YEAR) {
-    return RESULT_TYPE::NOT_SUPPORTED;
-  }
-
-  auto const ymd =
-    cuda::std::chrono::year_month_day(cuda::std::chrono::year{ts.year},
-                                      cuda::std::chrono::month{static_cast<uint32_t>(ts.month)},
-                                      cuda::std::chrono::day{static_cast<uint32_t>(ts.day)});
-  auto const days = cuda::std::chrono::sys_days(ymd).time_since_epoch().count();
+  int32_t const days = ts.to_epoch_day();
 
   // convert to seconds
   int64_t const timestamp_seconds =

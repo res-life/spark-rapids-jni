@@ -160,7 +160,7 @@ public class CastStrings {
    * Trims and parses strings to intermediate result.
    * This is the first phase of casting string with timezone to timestamp.
    * Intermediate result is a struct column with 7 sub-columns:
-   * - Result type: 0 Success, 1 invalid, 2 unsported, e.g. year > 32767
+   * - Parse Result type: 0 Success, 1 invalid e.g. year is 7 digits 1234567
    * - UTC timestamp
    * - Just time in the ts string. If true, then UTC ts is at year 1970-01-01
    * - Timezone type: 0 unspecified, 1 fixed type, 2 other type, 3 invalid

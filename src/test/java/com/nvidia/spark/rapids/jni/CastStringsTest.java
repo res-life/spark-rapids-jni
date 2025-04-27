@@ -644,12 +644,9 @@ public class CastStringsTest {
     list.add(Arrays.asList("2023-11-05 03:04:55 GMT-08:1:08", 1, 0L, 0, 3, 0, 0, -1));
     list.add(Arrays.asList("2023-11-05 03:04:55 GMT-8:1:08", 1, 0L, 0, 3, 0, 0, -1));
 
-    // unsupported year: abs(year) > 32767, std::chrono::year_month_day results in
-    // incorrect date
-    list.add(Arrays.asList("32768-01-01", 2, 0L, 0, 0, 0, 0, -1));
-    list.add(Arrays.asList("-32768-01-01", 2, 0L, 0, 0, 0, 0, -1)); // row 150
-    list.add(Arrays.asList("-50000-01-01", 2, 0L, 0, 0, 0, 0, -1));
-    list.add(Arrays.asList("50000-01-01", 2, 0L, 0, 0, 0, 0, -1));
+    // invalid year: e.g. abs(year) > 30,000
+    list.add(Arrays.asList("300001-01-01", 1, 0L, 0, 0, 0, 0, -1));
+    list.add(Arrays.asList("-300001-01-01", 1, 0L, 0, 0, 0, 0, -1)); // row 150
 
     List<String> input = new ArrayList<>(list.size());
     List<Byte> expected_return_type = new ArrayList<>(list.size());
