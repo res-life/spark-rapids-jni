@@ -15,6 +15,7 @@
  */
 
 #include "timezones.hpp"
+#include "utils.hpp"
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
@@ -29,6 +30,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <thrust/binary_search.h>
+#include <thrust/tabulate.h>
 
 using column                   = cudf::column;
 using column_device_view       = cudf::column_device_view;
@@ -38,6 +40,7 @@ using size_type                = cudf::size_type;
 using struct_view              = cudf::struct_view;
 using table_view               = cudf::table_view;
 
+namespace spark_rapids_jni {
 namespace {
 
 // This device functor uses a binary search to find the instant of the transition
@@ -46,16 +49,18 @@ namespace {
 // the offset.
 // To transition from UTC: do a binary search on the utcInstant child column and add
 // the offset.
-template <typename timestamp_type>
+template <typename timestamp_type, typename tz_indices_type>
 struct convert_timestamp_tz_functor {
   using duration_type = typename timestamp_type::duration;
+
+  timestamp_type const* input;
 
   // The list column of transitions to figure out the correct offset
   // to adjust the timestamp. The type of the values in this column is
   // LIST<STRUCT<utcInstant: int64, tzInstant: int64, utcOffset: int32>>.
   lists_column_device_view const transitions;
   // the index of the specified zone id in the transitions table
-  size_type const tz_index;
+  tz_indices_type tz_indices;
   // whether we are converting to UTC or converting to the timezone
   bool const to_utc;
 
@@ -64,15 +69,16 @@ struct convert_timestamp_tz_functor {
    * @param timestamp input timestamp
    *
    */
-  __device__ timestamp_type operator()(timestamp_type const& timestamp) const
+  __device__ timestamp_type operator()(cudf::size_type row_idx) const
   {
-    auto const utc_instants = transitions.child().child(0);
-    auto const tz_instants  = transitions.child().child(1);
-    auto const utc_offsets  = transitions.child().child(2);
+    timestamp_type const& timestamp = input[row_idx];
+    auto const utc_instants         = transitions.child().child(0);
+    auto const tz_instants          = transitions.child().child(1);
+    auto const utc_offsets          = transitions.child().child(2);
 
     auto const epoch_seconds = static_cast<int64_t>(
       cuda::std::chrono::duration_cast<cudf::duration_s>(timestamp.time_since_epoch()).count());
-    auto const tz_transitions = cudf::list_device_view{transitions, tz_index};
+    auto const tz_transitions = cudf::list_device_view{transitions, tz_indices(row_idx)};
     auto const list_size      = tz_transitions.size();
 
     auto const transition_times = cudf::device_span<int64_t const>(
@@ -89,10 +95,10 @@ struct convert_timestamp_tz_functor {
   }
 };
 
-template <typename timestamp_type>
+template <typename timestamp_type, typename tz_indices_type>
 auto convert_timestamp_tz(column_view const& input,
                           table_view const& transitions,
-                          size_type tz_index,
+                          tz_indices_type tz_indies,
                           bool to_utc,
                           rmm::cuda_stream_view stream,
                           rmm::device_async_resource_ref mr)
@@ -108,23 +114,19 @@ auto convert_timestamp_tz(column_view const& input,
                                              stream,
                                              mr);
 
-  thrust::transform(
-    rmm::exec_policy(stream),
-    input.begin<timestamp_type>(),
-    input.end<timestamp_type>(),
-    results->mutable_view().begin<timestamp_type>(),
-    convert_timestamp_tz_functor<timestamp_type>{fixed_transitions, tz_index, to_utc});
+  thrust::tabulate(rmm::exec_policy(stream),
+                   results->mutable_view().begin<timestamp_type>(),
+                   results->mutable_view().end<timestamp_type>(),
+                   convert_timestamp_tz_functor<timestamp_type, tz_indices_type>{
+                     input.begin<timestamp_type>(), fixed_transitions, tz_indies, to_utc});
 
   return results;
 }
 
-}  // namespace
-
-namespace spark_rapids_jni {
-
+template <typename tz_indices_type>
 std::unique_ptr<column> convert_timestamp(column_view const& input,
                                           table_view const& transitions,
-                                          size_type tz_index,
+                                          tz_indices_type tz_indices,
                                           bool to_utc,
                                           rmm::cuda_stream_view stream,
                                           rmm::device_async_resource_ref mr)
@@ -133,34 +135,38 @@ std::unique_ptr<column> convert_timestamp(column_view const& input,
 
   switch (type) {
     case cudf::type_id::TIMESTAMP_SECONDS:
-      return convert_timestamp_tz<cudf::timestamp_s>(
-        input, transitions, tz_index, to_utc, stream, mr);
+      return convert_timestamp_tz<cudf::timestamp_s, tz_indices_type>(
+        input, transitions, tz_indices, to_utc, stream, mr);
     case cudf::type_id::TIMESTAMP_MILLISECONDS:
-      return convert_timestamp_tz<cudf::timestamp_ms>(
-        input, transitions, tz_index, to_utc, stream, mr);
+      return convert_timestamp_tz<cudf::timestamp_ms, tz_indices_type>(
+        input, transitions, tz_indices, to_utc, stream, mr);
     case cudf::type_id::TIMESTAMP_MICROSECONDS:
-      return convert_timestamp_tz<cudf::timestamp_us>(
-        input, transitions, tz_index, to_utc, stream, mr);
+      return convert_timestamp_tz<cudf::timestamp_us, tz_indices_type>(
+        input, transitions, tz_indices, to_utc, stream, mr);
     default: CUDF_FAIL("Unsupported timestamp unit for timezone conversion");
   }
 }
 
+}  // namespace
+
 std::unique_ptr<column> convert_timestamp_to_utc(column_view const& input,
                                                  table_view const& transitions,
-                                                 size_type tz_index,
+                                                 size_type const tz_index,
                                                  rmm::cuda_stream_view stream,
                                                  rmm::device_async_resource_ref mr)
 {
-  return convert_timestamp(input, transitions, tz_index, true, stream, mr);
+  return convert_timestamp(
+    input, transitions, const_size_type_iterator{tz_index}, true, stream, mr);
 }
 
 std::unique_ptr<column> convert_utc_timestamp_to_timezone(column_view const& input,
                                                           table_view const& transitions,
-                                                          size_type tz_index,
+                                                          size_type const tz_index,
                                                           rmm::cuda_stream_view stream,
                                                           rmm::device_async_resource_ref mr)
 {
-  return convert_timestamp(input, transitions, tz_index, false, stream, mr);
+  return convert_timestamp(
+    input, transitions, const_size_type_iterator{tz_index}, false, stream, mr);
 }
 
 }  // namespace spark_rapids_jni

@@ -20,6 +20,16 @@
 
 namespace spark_rapids_jni {
 
+struct size_type_iterator {
+  cudf::size_type const* values;
+  __device__ cudf::size_type operator()(cudf::size_type const& idx) const { return values[idx]; }
+};
+
+struct const_size_type_iterator {
+  cudf::size_type const value;
+  __device__ cudf::size_type operator()(cudf::size_type const&) const { return value; }
+};
+
 /**
  * Represents timestamp with microsecond accuracy.
  * Max year is six-digits, approximately [-300000, 300000]
