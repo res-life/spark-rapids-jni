@@ -15,6 +15,7 @@
  */
 
 #include "cast_string.hpp"
+#include "utils.hpp"
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
@@ -88,33 +89,6 @@ enum class TS_TYPE : uint8_t { NOT_JUST_TIME = 0, JUST_TIME = 1 };
  * A Long is able to represent a timestamp within [+-]200 thousand years.
  * So year is 4-6 digits, formula is: Long.MaxValue/microseconds_per_year.
  */
-struct ts_segments {
-  // 4-6 digits
-  int32_t year;
-
-  // 1-12
-  int32_t month;
-
-  // 1-31; it is 29 for leap February, or 28 for regular February
-  int32_t day;
-
-  // 0-23
-  int32_t hour;
-
-  // 0-59
-  int32_t minute;
-
-  // 0-59
-  int32_t second;
-
-  // 0-999999, only parse 6 digits, ignore/truncate the rest digits
-  int32_t microseconds;
-
-  __device__ ts_segments()
-    : year(1970), month(1), day(1), hour(0), minute(0), second(0), microseconds(0)
-  {
-  }
-};
 
 enum class TZ_TYPE : uint8_t {
 
@@ -191,40 +165,6 @@ __device__ bool is_whitespace(char const c)
   // Character.isISOControl(c),
   // 0-31 is control characters, 32 is space, 127 is delete
   return (c >= 0 && c <= 32) || c == 127;
-}
-
-__device__ bool is_leap_year(int year)
-{
-  return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-}
-
-__device__ int days_in_month(int month, int year)
-{
-  if (month == 2) { return is_leap_year(year) ? 29 : 28; }
-  return (month == 4 || month == 6 || month == 9 || month == 11) ? 30 : 31;
-}
-
-__device__ bool is_valid_date(int year, int month, int day)
-{
-  if (month < 1 || month > 12 || day < 1) {
-    return false;  // Invalid month or day
-  }
-
-  // Check for leap year, February has 29 days in leap year
-  if (month == 2 && is_leap_year(year)) { return (day <= 29); }
-
-  // Check against the standard days
-  return (day <= days_in_month(month, year));
-}
-
-__device__ bool is_valid_time(int hour, int minute, int second)
-{
-  return (hour >= 0 && hour < 24) && (minute >= 0 && minute < 60) && (second >= 0 && second < 60);
-}
-
-__device__ bool is_valid_ts(ts_segments const& ts)
-{
-  return is_valid_date(ts.year, ts.month, ts.day) && is_valid_time(ts.hour, ts.minute, ts.second);
 }
 
 __device__ bool is_valid_tz(time_zone const& tz) { return tz.type != TZ_TYPE::INVALID_TZ; }
@@ -696,7 +636,7 @@ __device__ bool parse_from_date(
  */
 __device__ bool is_valid(ts_segments ts, time_zone tz)
 {
-  return is_valid_ts(ts) && is_valid_tz(tz);
+  return ts.is_valid_ts() && is_valid_tz(tz);
 }
 
 /**
