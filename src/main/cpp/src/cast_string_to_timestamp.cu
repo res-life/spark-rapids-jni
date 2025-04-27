@@ -15,6 +15,7 @@
  */
 
 #include "cast_string.hpp"
+#include "timezones.hpp"
 #include "utils.hpp"
 
 #include <cudf/column/column_device_view.cuh>
@@ -863,14 +864,17 @@ std::unique_ptr<cudf::column> parse_ts_strings(cudf::strings_column_view const& 
     num_rows, std::move(output_columns), 0, rmm::device_buffer(), stream, mr);
 }
 
-std::unique_ptr<cudf::column> to_timestamp(cudf::strings_column_view const& input,
+std::unique_ptr<cudf::column> to_timestamp(cudf::column_view const& input,
+                                           cudf::table_view const& transitions,
                                            bool is_ansi_mode,
                                            rmm::cuda_stream_view stream,
                                            rmm::device_async_resource_ref mr)
 {
-  // TODO
-  return nullptr;
+  auto const ts_col         = input.child(0);
+  auto const tz_indices_col = input.child(6);
+  return convert_timestamp_to_utc(ts_col, transitions, tz_indices_col, stream, mr);
 }
+
 }  // anonymous namespace
 
 std::unique_ptr<cudf::column> parse_timestamp_strings(cudf::strings_column_view const& input,
@@ -883,11 +887,12 @@ std::unique_ptr<cudf::column> parse_timestamp_strings(cudf::strings_column_view 
 }
 
 std::unique_ptr<cudf::column> convert_to_timestamp(cudf::column_view const& input,
+                                                   cudf::table_view const& transitions,
                                                    bool is_ansi_mode,
                                                    rmm::cuda_stream_view stream,
                                                    rmm::device_async_resource_ref mr)
 {
-  return to_timestamp(input, is_ansi_mode, stream, mr);
+  return to_timestamp(input, transitions, is_ansi_mode, stream, mr);
 }
 
 }  // namespace spark_rapids_jni

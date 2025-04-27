@@ -213,6 +213,42 @@ public class CastStrings {
         input.getNativeView(), defaultTimeZoneIndex, timeZoneInfo.getNativeView()));
   }
 
+  static ColumnVector convertToTimestamp(
+      ColumnView input,
+      boolean ansi_enabled) {
+
+    // try (Table transitions = GpuTimeZoneDB.getTransitions()) {
+    // return new
+    // ColumnVector(convertUTCTimestampColumnToTimeZone(input.getNativeView(),
+    // transitions.getNativeView(), tzIndex));
+    // }
+
+    // TODO
+    return null;
+  }
+
+  public static ColumnVector ToTimestamp(
+      ColumnView input,
+      String defaultTimeZone,
+      boolean ansi_enabled) {
+    // TODO
+    // If has timestamp > 2200 and it has any DST timezone in strings, fallback to
+    // cpu
+
+    // parse
+    if (ansi_enabled) {
+      // check invalid count
+    }
+
+    // convert
+
+    if (ansi_enabled) {
+      // from from/to signs is not equal
+    }
+
+    return null;
+  }
+
   private static native long toInteger(long nativeColumnView, boolean ansi_enabled, boolean strip,
       int dtype);
   private static native long toDecimal(long nativeColumnView, boolean ansi_enabled, boolean strip,
@@ -228,6 +264,7 @@ public class CastStrings {
 
   private static native long parseTimestampStrings(long input, int defaultTimezoneIndex,
       long timeZoneInfo);
-  private static native long convertToTimestamp(long input, boolean ansi_enabled);
+
+  private static native long convertToTimestamp(long input, long transitions, boolean ansi_enabled);
 
 }

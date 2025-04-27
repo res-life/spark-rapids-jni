@@ -169,4 +169,24 @@ std::unique_ptr<column> convert_utc_timestamp_to_timezone(column_view const& inp
     input, transitions, const_size_type_iterator{tz_index}, false, stream, mr);
 }
 
+std::unique_ptr<column> convert_timestamp_to_utc(column_view const& input,
+                                                 table_view const& transitions,
+                                                 column_view const& tz_indices,
+                                                 rmm::cuda_stream_view stream,
+                                                 rmm::device_async_resource_ref mr)
+{
+  return convert_timestamp(
+    input, transitions, size_type_iterator{tz_indices.begin<cudf::size_type>()}, true, stream, mr);
+}
+
+std::unique_ptr<column> convert_utc_timestamp_to_timezone(column_view const& input,
+                                                          table_view const& transitions,
+                                                          column_view const& tz_indices,
+                                                          rmm::cuda_stream_view stream,
+                                                          rmm::device_async_resource_ref mr)
+{
+  return convert_timestamp(
+    input, transitions, size_type_iterator{tz_indices.begin<cudf::size_type>()}, false, stream, mr);
+}
+
 }  // namespace spark_rapids_jni

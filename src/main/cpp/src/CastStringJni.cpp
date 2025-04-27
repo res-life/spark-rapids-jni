@@ -288,14 +288,15 @@ JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_CastStrings_parseTimest
 }
 
 JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_CastStrings_convertToTimestamp(
-  JNIEnv* env, jclass, jlong input_column, jboolean is_ansi_mode)
+  JNIEnv* env, jclass, jlong input_column, jlong transitions_handle, jboolean is_ansi_mode)
 {
   JNI_NULL_CHECK(env, input_column, "input column is null", 0);
   try {
     cudf::jni::auto_set_device(env);
-    auto const input_cv = reinterpret_cast<cudf::column_view const*>(input_column);
+    auto const input_cv       = reinterpret_cast<cudf::column_view const*>(input_column);
+    auto const transitions_cv = reinterpret_cast<cudf::table_view const*>(transitions_handle);
     return cudf::jni::release_as_jlong(
-      spark_rapids_jni::convert_to_timestamp(*input_cv, is_ansi_mode));
+      spark_rapids_jni::convert_to_timestamp(*input_cv, *transitions_cv, is_ansi_mode));
   }
   CATCH_STD(env, 0);
 }
