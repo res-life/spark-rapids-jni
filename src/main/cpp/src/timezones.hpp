@@ -69,15 +69,13 @@ std::unique_ptr<cudf::column> convert_utc_timestamp_to_timezone(
 
 std::unique_ptr<cudf::column> convert_timestamp_to_utc(
   cudf::column_view const& input,
+  cudf::column_view const& invalid,
+  cudf::column_view const& just_time,
+  cudf::column_view const& tz_type,
+  cudf::column_view const& tz_offset,
   cudf::table_view const& transitions,
-  cudf::column_view const& tz_indices,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource());
-
-std::unique_ptr<cudf::column> convert_utc_timestamp_to_timezone(
-  cudf::column_view const& input,
-  cudf::table_view const& transitions,
-  cudf::column_view const& tz_indices,
+  cudf::column_view const tz_indices,
+  int64_t const default_epoch_day,
   rmm::cuda_stream_view stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource());
 

@@ -26,19 +26,18 @@
 
 namespace spark_rapids_jni {
 
-bool has_any_true(cudf::column_view const& input, rmm::cuda_stream_view stream)
+int64_t false_count(cudf::column_view const& input, rmm::cuda_stream_view stream)
 {
   CUDF_EXPECTS(input.type().id() == cudf::type_id::UINT8 ||
                  input.type().id() == cudf::type_id::INT8 ||
                  input.type().id() == cudf::type_id::BOOL8,
-               "Input column must be of type UINT8, INT8, or BOOL8");
+               "Input column must be of type of UINT8, INT8, or BOOL8");
   auto const dcv = cudf::column_device_view::create(input);
-  return thrust::count_if(rmm::exec_policy_nosync(stream),
-                          thrust::make_counting_iterator(0),
-                          thrust::make_counting_iterator(input.size()),
-                          [d_col = *dcv] __device__(cudf::size_type idx) {
-                            return d_col.element<uint8_t>(idx) != 0;
-                          }) > 0;
+  return thrust::count_if(
+    rmm::exec_policy_nosync(stream),
+    thrust::make_counting_iterator(0),
+    thrust::make_counting_iterator(input.size()),
+    [d_col = *dcv] __device__(cudf::size_type idx) { return d_col.element<uint8_t>(idx) == 0; });
 }
 
 }  // namespace spark_rapids_jni

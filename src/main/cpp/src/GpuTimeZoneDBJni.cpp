@@ -50,4 +50,48 @@ Java_com_nvidia_spark_rapids_jni_GpuTimeZoneDB_convertUTCTimestampColumnToTimeZo
   }
   CATCH_STD(env, 0);
 }
+
+JNIEXPORT jlong JNICALL
+Java_com_nvidia_spark_rapids_jni_GpuTimeZoneDB_convertTimestampColumnToUTCWithTzCv(
+  JNIEnv* env,
+  jclass,
+  jlong input_handle,
+  jlong invalid_handle,
+  jlong just_time_handle,
+  jlong tz_type_handle,
+  jlong tz_offset_handle,
+  jlong transitions_handle,
+  jlong tz_indices_handle,
+  jlong default_epoch_day)
+{
+  JNI_NULL_CHECK(env, input_handle, "column is null", 0);
+  JNI_NULL_CHECK(env, invalid_handle, "column is null", 0);
+  JNI_NULL_CHECK(env, just_time_handle, "column is null", 0);
+  JNI_NULL_CHECK(env, tz_type_handle, "column is null", 0);
+  JNI_NULL_CHECK(env, tz_offset_handle, "column is null", 0);
+  JNI_NULL_CHECK(env, transitions_handle, "column is null", 0);
+  JNI_NULL_CHECK(env, tz_indices_handle, "column is null", 0);
+
+  try {
+    cudf::jni::auto_set_device(env);
+    auto const input       = reinterpret_cast<cudf::column_view const*>(input_handle);
+    auto const invalid     = reinterpret_cast<cudf::column_view const*>(invalid_handle);
+    auto const just_time   = reinterpret_cast<cudf::column_view const*>(just_time_handle);
+    auto const tz_type     = reinterpret_cast<cudf::column_view const*>(tz_type_handle);
+    auto const tz_offset   = reinterpret_cast<cudf::column_view const*>(tz_offset_handle);
+    auto const transitions = reinterpret_cast<cudf::table_view const*>(transitions_handle);
+    auto const tz_indices  = reinterpret_cast<cudf::column_view const*>(tz_indices_handle);
+
+    return cudf::jni::ptr_as_jlong(spark_rapids_jni::convert_timestamp_to_utc(*input,
+                                                                              *invalid,
+                                                                              *just_time,
+                                                                              *tz_type,
+                                                                              *tz_offset,
+                                                                              *transitions,
+                                                                              *tz_indices,
+                                                                              default_epoch_day)
+                                     .release());
+  }
+  CATCH_STD(env, 0);
+}
 }

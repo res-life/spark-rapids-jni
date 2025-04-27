@@ -25,7 +25,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/functional>
-#include <thrust/iterator/counting_iterator.h>
+#include <thrust/for_each.h>
 #include <thrust/transform.h>
 
 namespace {

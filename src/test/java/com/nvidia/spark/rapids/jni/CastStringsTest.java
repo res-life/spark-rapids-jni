@@ -18,11 +18,13 @@ package com.nvidia.spark.rapids.jni;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
+import org.junit.jupiter.api.Assertions;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
+import java.time.Instant;
+import java.time.LocalDate;
 
 import org.junit.jupiter.api.Test;
 
@@ -436,7 +438,7 @@ public class CastStringsTest {
   }
 
   @Test
-  void toTimestampIntermediateResultTest() {
+  void castStringToTimestampFirstPhaseTest() {
     List<List<Object>> list = new ArrayList<>();
     // Row is: input, return type, UTC ts, just time, tz type, offset, is DST, tz
     // index
@@ -686,6 +688,253 @@ public class CastStringsTest {
       AssertUtils.assertColumnsAreEqual(expectedTzOffset, result.getChildColumnView(4));
       AssertUtils.assertColumnsAreEqual(expectedTzIsDst, result.getChildColumnView(5));
       AssertUtils.assertColumnsAreEqual(expectedTzIndex, result.getChildColumnView(6));
+    }
+  }
+
+  @Test
+  void castStringToTimestampOnCpu() {
+    GpuTimeZoneDB.cacheDatabase(2200);
+    GpuTimeZoneDB.verifyDatabaseCached();
+
+    Instant ins1 = Instant.parse("2023-11-05T03:04:55Z");
+    Instant ins2 = Instant.parse("2023-11-01T03:04:55Z");
+    Instant ins3 = Instant.parse("2500-01-01T00:00:00Z"); // exceeds the max year 2200
+    long base_ts1 = ins1.getEpochSecond() * 1000000L + ins1.getNano() / 1000L;
+    long base_ts2 = ins2.getEpochSecond() * 1000000L + ins2.getNano() / 1000L;
+    long base_ts3 = ins3.getEpochSecond() * 1000000L + ins2.getNano() / 1000L;
+
+    // offset +01:02
+    long offset = -(3600L * 1 + 60L * 2) * 1000000L;
+    long cttOffset = -8 * 3600L * 1000000L;
+    long pstOffset1 = +(8 * 3600L * 1000000L);
+    long pstOffset2 = +(7 * 3600L * 1000000L);
+
+    List<List<Object>> list = new ArrayList<>();
+    List<String> input = new ArrayList<>(list.size());
+    List<Long> expectedTS = new ArrayList<>(list.size());
+
+    // 1. test fallback to cpu, has large year and has DST
+    // Row is: input, expected ts, is null
+    // CTT = Asia/Shanghai
+    // PST = America/Los_Angeles
+    list.add(Arrays.asList("2500-01-01", base_ts3, true)); // this value contributes to fallback
+    list.add(Arrays.asList("2023-11-05T03:04:55 +00:00", base_ts1, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 +01:02", base_ts1 + offset, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 CTT", base_ts1 + cttOffset, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 Asia/Shanghai", base_ts1 + cttOffset, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 PST", base_ts1 + pstOffset1, true)); // PST contributes to fallback
+    list.add(Arrays.asList("2023-11-05 03:04:55 America/Los_Angeles", base_ts1 + pstOffset1, true));
+    list.add(Arrays.asList("2023-11-01 03:04:55 PST", base_ts2 + pstOffset2, true));
+    list.add(Arrays.asList("2023-11-01 03:04:55 America/Los_Angeles", base_ts2 + pstOffset2, true));
+    list.add(Arrays.asList("invalid", 0, false)); // ansi mode will cause exception
+    for (List<Object> row : list) {
+      input.add(row.get(0).toString());
+      if ((Boolean) row.get(2)) {
+        expectedTS.add(Long.parseLong(row.get(1).toString()));
+      } else {
+        expectedTS.add(null);
+      }
+    }
+    try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
+        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", false);
+        ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(expectedTS.toArray(new Long[0]))) {
+      AssertUtils.assertColumnsAreEqual(expected, actual);
+    }
+
+    // 2. test ansi mode true
+    try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
+        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", true)) {
+      Assertions.assertNull(actual);
+    }
+
+    // 3. test ansi mode true, but without invalid input
+    list.clear();
+    input.clear();
+    expectedTS.clear();
+    list.add(Arrays.asList("2023-11-05 03:04:55 PST", base_ts1 + pstOffset1, true)); // PST contributes to fallback
+    list.add(Arrays.asList("2500-01-01", base_ts3, true)); // this value contributes to fallback
+    list.add(Arrays.asList("2023-11-05T03:04:55 +00:00", base_ts1, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 Z", base_ts1, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 +01:02", base_ts1 + offset, true));
+    input.clear();
+    expectedTS.clear();
+    for (List<Object> row : list) {
+      input.add(row.get(0).toString());
+      expectedTS.add(Long.parseLong(row.get(1).toString()));
+    }
+    try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
+        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", false);
+        ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(expectedTS.toArray(new Long[0]))) {
+      AssertUtils.assertColumnsAreEqual(expected, actual);
+    }
+
+    // 4. test just time
+    input.clear();
+    list.clear();
+    list.add(Arrays.asList("T00:00:01 +00:00", base_ts1, true));
+    list.add(Arrays.asList("2500-01-01", base_ts3, true)); // this value contributes to fallback
+    list.add(Arrays.asList("2023-11-05 03:04:55 PST", base_ts1 + pstOffset1, true)); // PST contributes to fallback
+
+    for (List<Object> row : list) {
+      input.add(row.get(0).toString());
+    }
+    long days = LocalDate.now().toEpochDay();
+    try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
+        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", false);
+        HostColumnVector hcv = actual.copyToHost();) {
+      long expectedTs1 = (days * 24 * 3600 + 1) * 1000000L;
+      long expectedTs2 = ((days + 1) * 24 * 3600 + 1) * 1000000L;
+      long actualTs = hcv.getLong(0);
+      Assertions.assertTrue(actualTs == expectedTs1 || actualTs == expectedTs2);
+    }
+
+    // 5. test overflow after convert timezone for other timezone
+    input.clear();
+    list.clear();
+    list.add(Arrays.asList("+294247-01-10T04:00:54.775807 PST", base_ts1, false)); // Spark max year
+    list.add(Arrays.asList("2500-01-01", base_ts3, true)); // this value contributes to fallback
+    list.add(Arrays.asList("2023-11-05 03:04:55 PST", base_ts1 + pstOffset1, true)); // PST contributes to fallback
+    for (List<Object> row : list) {
+      input.add(row.get(0).toString());
+    }
+    try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
+        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", true)) {
+      Assertions.assertNull(actual);
+    }
+
+    // 6 test overflow after convert timezone for fixed timezone
+    input.clear();
+    list.clear();
+    list.add(Arrays.asList("+294247-01-10T04:00:54.775807 -00:00:01", base_ts1, false)); // Spark max year
+    list.add(Arrays.asList("2500-01-01", base_ts3, true)); // this value contributes to fallback
+    list.add(Arrays.asList("2023-11-05 03:04:55 PST", base_ts1 + pstOffset1, true)); // PST contributes to fallback
+    for (List<Object> row : list) {
+      input.add(row.get(0).toString());
+    }
+    try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
+        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", true)) {
+      Assertions.assertNull(actual);
+    }
+  }
+
+  @Test
+  void castStringToTimestampOnGpu() {
+    GpuTimeZoneDB.cacheDatabase(2200);
+    GpuTimeZoneDB.verifyDatabaseCached();
+
+    Instant ins1 = Instant.parse("2023-11-05T03:04:55Z");
+    Instant ins2 = Instant.parse("2023-11-01T03:04:55Z");
+    long base_ts1 = ins1.getEpochSecond() * 1000000L + ins1.getNano() / 1000L;
+    long base_ts2 = ins2.getEpochSecond() * 1000000L + ins2.getNano() / 1000L;
+
+    // offset +01:02
+    long offset = -(3600L * 1 + 60L * 2) * 1000000L;
+    long cttOffset = -8 * 3600L * 1000000L;
+    long pstOffset1 = +(8 * 3600L * 1000000L);
+    long pstOffset2 = +(7 * 3600L * 1000000L);
+
+    List<List<Object>> list = new ArrayList<>();
+    List<String> input = new ArrayList<>(list.size());
+    List<Long> expectedTS = new ArrayList<>(list.size());
+
+    // 1. test fallback to cpu, has large year and has DST
+    // Row is: input, expected ts, is null
+    // CTT = Asia/Shanghai
+    // PST = America/Los_Angeles
+    list.add(Arrays.asList("2023-11-05T03:04:55 +00:00", base_ts1, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 +01:02", base_ts1 + offset, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 CTT", base_ts1 + cttOffset, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 Asia/Shanghai", base_ts1 + cttOffset, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 PST", base_ts1 + pstOffset1, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 America/Los_Angeles", base_ts1 + pstOffset1, true));
+    list.add(Arrays.asList("2023-11-01 03:04:55 PST", base_ts2 + pstOffset2, true));
+    list.add(Arrays.asList("2023-11-01 03:04:55 America/Los_Angeles", base_ts2 + pstOffset2, true));
+    list.add(Arrays.asList("invalid", 0, false)); // ansi mode will cause exception
+    for (List<Object> row : list) {
+      input.add(row.get(0).toString());
+      if ((Boolean) row.get(2)) {
+        expectedTS.add(Long.parseLong(row.get(1).toString()));
+      } else {
+        expectedTS.add(null);
+      }
+    }
+    try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
+        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", false);
+        ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(
+            expectedTS.toArray(new Long[0]))) {
+      AssertUtils.assertColumnsAreEqual(expected, actual);
+    }
+
+    // 2. test ansi mode true
+    try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
+        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", true)) {
+      Assertions.assertNull(actual);
+    }
+
+    // 3. test ansi mode true, but without invalid input
+    list.clear();
+    input.clear();
+    expectedTS.clear();
+    list.add(Arrays.asList("2023-11-05 03:04:55 PST", base_ts1 + pstOffset1, true));
+    list.add(Arrays.asList("2023-11-05T03:04:55 +00:00", base_ts1, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 Z", base_ts1, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 +01:02", base_ts1 + offset, true));
+    input.clear();
+    expectedTS.clear();
+    for (List<Object> row : list) {
+      input.add(row.get(0).toString());
+      expectedTS.add(Long.parseLong(row.get(1).toString()));
+    }
+    try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
+        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", false);
+        ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(
+            expectedTS.toArray(new Long[0]))) {
+      AssertUtils.assertColumnsAreEqual(expected, actual);
+    }
+
+    // 4. test just time
+    input.clear();
+    list.clear();
+    list.add(Arrays.asList("T00:00:01 +00:00", base_ts1, true));
+    list.add(Arrays.asList("2023-11-05 03:04:55 PST", base_ts1 + pstOffset1, true));
+
+    for (List<Object> row : list) {
+      input.add(row.get(0).toString());
+    }
+    long days = LocalDate.now().toEpochDay();
+    try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
+        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", false);
+        HostColumnVector hcv = actual.copyToHost();) {
+      long expectedTs1 = (days * 24 * 3600 + 1) * 1000000L;
+      long expectedTs2 = ((days + 1) * 24 * 3600 + 1) * 1000000L;
+      long actualTs = hcv.getLong(0);
+      Assertions.assertTrue(actualTs == expectedTs1 || actualTs == expectedTs2);
+    }
+
+    // 5. test overflow after convert timezone for other timezone
+    input.clear();
+    list.clear();
+    // Spark max year
+    list.add(Arrays.asList("+294247-01-10T04:00:54.775807 -00:00:01", base_ts1, false));
+    for (List<Object> row : list) {
+      input.add(row.get(0).toString());
+    }
+    try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
+        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", true)) {
+      Assertions.assertNull(actual);
+    }
+
+    // 6 test overflow after convert timezone for fixed timezone
+    input.clear();
+    list.clear();
+    // Spark max year
+    list.add(Arrays.asList("+294247-01-10T04:00:54.775807 -00:00:01", base_ts1, false));
+    for (List<Object> row : list) {
+      input.add(row.get(0).toString());
+    }
+    try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
+        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", true)) {
+      Assertions.assertNull(actual);
     }
   }
 }

@@ -16,6 +16,8 @@
 
 package com.nvidia.spark.rapids.jni;
 
+import java.time.LocalDate;
+
 import ai.rapids.cudf.*;
 
 /** Utility class for casting between string columns and native type columns */
@@ -135,11 +137,11 @@ public class CastStrings {
   }
 
   /**
-   * Converts an integer column to a string column by converting the underlying integers to the
-   * specified base.
+   * Converts an integer column to a string column by converting the underlying
+   * integers to the specified base.
    *
-   * Note: Right now we only support base 10 and 16. The hexadecimal values will be
-   * returned without leading zeros or padding at the end
+   * Note: Right now we only support base 10 and 16. The hexadecimal values will
+   * be returned without leading zeros or padding at the end
    * 
    * Example:
    * input = [123, -1, 0, 27, 342718233]
@@ -148,7 +150,7 @@ public class CastStrings {
    * s = fromIntegersWithBase(input, 10)
    * s is ['123', '-1', '0', '27', '342718233']
    *
-   * @param cv The input integer column to be converted.
+   * @param cv   The input integer column to be converted.
    * @param base base that we want to convert to (currently only 10/16)
    * @return a new String ColumnVector
    */
@@ -213,40 +215,88 @@ public class CastStrings {
         input.getNativeView(), defaultTimeZoneIndex, timeZoneInfo.getNativeView()));
   }
 
-  static ColumnVector convertToTimestamp(
-      ColumnView input,
-      boolean ansi_enabled) {
-
-    // try (Table transitions = GpuTimeZoneDB.getTransitions()) {
-    // return new
-    // ColumnVector(convertUTCTimestampColumnToTimeZone(input.getNativeView(),
-    // transitions.getNativeView(), tzIndex));
-    // }
-
-    // TODO
-    return null;
+  static ColumnVector convertToTimestampOnGpu(
+      long originInputNullcount, ColumnVector intermediateResult, boolean ansi_enabled) {
+    ColumnView invalid = intermediateResult.getChildColumnView(0);
+    ColumnView ts = intermediateResult.getChildColumnView(1);
+    ColumnView justTime = intermediateResult.getChildColumnView(2);
+    ColumnView tzType = intermediateResult.getChildColumnView(3);
+    ColumnView tzOffset = intermediateResult.getChildColumnView(4);
+    ColumnView tzIndex = intermediateResult.getChildColumnView(6);
+    try (ColumnVector result = GpuTimeZoneDB.fromTimestampToUtcTimestampWithTzCv(
+        invalid, ts, justTime, tzType, tzOffset, tzIndex)) {
+      if (ansi_enabled && result.getNullCount() > originInputNullcount) {
+        // has new nulls, means has any invalid data,
+        // e.g.: format is invalid, year is not supported 7 digits
+        // protocol: if ansi mode and has any invalid data, return null
+        return null;
+      } else {
+        return result.incRefCount();
+      }
+    }
   }
 
+  static ColumnVector convertToTimestampOnCpu(
+      long originInputNullcount, ColumnVector intermediateResult, boolean ansi_enabled) {
+    ColumnView invalid = intermediateResult.getChildColumnView(0);
+    ColumnView ts = intermediateResult.getChildColumnView(1);
+    ColumnView justTime = intermediateResult.getChildColumnView(2);
+    ColumnView tzType = intermediateResult.getChildColumnView(3);
+    ColumnView tzOffset = intermediateResult.getChildColumnView(4);
+    ColumnView tzIndex = intermediateResult.getChildColumnView(6);
+    try (ColumnVector result = GpuTimeZoneDB.cpuChangeTimestampTzWithTimezones(
+        invalid, ts, justTime, tzType, tzOffset, tzIndex)) {
+      if (ansi_enabled && result.getNullCount() > originInputNullcount) {
+        // has new nulls, means has any invalid data,
+        // e.g.: format is invalid, year is not supported 7 digits
+        // protocol: if ansi mode and has any invalid data, return null
+        return null;
+      } else {
+        return result.incRefCount();
+      }
+    }
+  }
+
+  /**
+   * Cast a string column with timezones to timestamp
+   * 
+   * @param input           the input string column to be converted
+   * @param defaultTimeZone the default timezone to be used for the conversion. If
+   *                        there is no timezone in a string, use this default
+   *                        timezone
+   * @param ansi_enabled    throw exception if invalid data are found and
+   *                        ansi_enabled is true, otherwise return null
+   * @return a timestamp column
+   */
   public static ColumnVector ToTimestamp(
       ColumnView input,
       String defaultTimeZone,
       boolean ansi_enabled) {
-    // TODO
-    // If has timestamp > 2200 and it has any DST timezone in strings, fallback to
-    // cpu
 
-    // parse
-    if (ansi_enabled) {
-      // check invalid count
+    // 1. check default timezone is valid
+    Integer defaultTimeZoneIndex = GpuTimeZoneDB.getIndexToTransitionTable(defaultTimeZone);
+    if (defaultTimeZoneIndex == null) {
+      throw new IllegalArgumentException("Invalid default timezone: " + defaultTimeZone);
     }
 
-    // convert
+    // 2. parse to intermediate result
+    try (ColumnVector parseResult = parseTimestampStrings(
+        input, defaultTimeZoneIndex, GpuTimeZoneDB.getTimeZoneInfo())) {
 
-    if (ansi_enabled) {
-      // from from/to signs is not equal
+      // 3. fallback to cup if has a DST and has a timestamp exceeds max year
+      // threshold
+      ColumnView tsCv = parseResult.getChildColumnView(1);
+      ColumnView hasDSTCv = parseResult.getChildColumnView(5);
+      boolean exceedsMaxYearThresholdOfDST = GpuTimeZoneDB.exceedsMaxYearThresholdOfDST(tsCv);
+      boolean hasDST = BooleanUtils.trueCount(hasDSTCv) > 0;
+      if (exceedsMaxYearThresholdOfDST && hasDST) {
+        return convertToTimestampOnCpu(input.getNullCount(),
+            parseResult, ansi_enabled);
+      }
+
+      // 4. convert to timestamp
+      return convertToTimestampOnGpu(input.getNullCount(), parseResult, ansi_enabled);
     }
-
-    return null;
   }
 
   private static native long toInteger(long nativeColumnView, boolean ansi_enabled, boolean strip,
@@ -262,9 +312,7 @@ public class CastStrings {
     boolean ansiEnabled, int dtype);
   private static native long fromIntegersWithBase(long nativeColumnView, int base);
 
-  private static native long parseTimestampStrings(long input, int defaultTimezoneIndex,
-      long timeZoneInfo);
-
-  private static native long convertToTimestamp(long input, long transitions, boolean ansi_enabled);
+  private static native long parseTimestampStrings(
+      long input, int defaultTimezoneIndex, long timeZoneInfo);
 
 }

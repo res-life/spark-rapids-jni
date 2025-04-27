@@ -156,15 +156,4 @@ std::unique_ptr<cudf::column> parse_timestamp_strings(
   rmm::cuda_stream_view stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
-/**
- * @brief Convert a input struct column into a timestamp column.
- * @param input is output of the `parse_timestamp_strings` function.
- */
-std::unique_ptr<cudf::column> convert_to_timestamp(
-  cudf::column_view const& input,
-  cudf::table_view const& transitions,
-  bool is_ansi_mode,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
-
 }  // namespace spark_rapids_jni

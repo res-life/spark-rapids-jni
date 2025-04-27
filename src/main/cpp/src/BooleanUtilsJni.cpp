@@ -19,7 +19,7 @@
 
 extern "C" {
 
-JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_BooleanUtils_hasAnyTrue(JNIEnv* env,
+JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_BooleanUtils_falseCount(JNIEnv* env,
                                                                                  jclass,
                                                                                  jlong input_column)
 {
@@ -27,7 +27,7 @@ JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_BooleanUtils_hasAnyTrue
   try {
     cudf::jni::auto_set_device(env);
     auto const* input_cv = reinterpret_cast<cudf::column_view const*>(input_column);
-    return spark_rapids_jni::has_any_true(*input_cv);
+    return spark_rapids_jni::false_count(*input_cv);
   }
   CATCH_STD(env, 0);
 }

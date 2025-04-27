@@ -21,7 +21,10 @@
 
 namespace spark_rapids_jni {
 
-bool has_any_true(cudf::column_view const& input,
-                  rmm::cuda_stream_view stream = cudf::get_default_stream());
+/**
+ * Get the number of false values in a boolean/int8/uint8 column.
+ */
+int64_t false_count(cudf::column_view const& input,
+                    rmm::cuda_stream_view stream = cudf::get_default_stream());
 
 }  // namespace spark_rapids_jni

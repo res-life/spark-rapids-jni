@@ -20,13 +20,23 @@ import ai.rapids.cudf.*;
 
 public class BooleanUtils {
 
-  public static boolean hasAnyTrue(ColumnView input) {
+  /**
+   * Get the number of false values in a boolean/int8/uint8 column.
+   */
+  public static long falseCount(ColumnView input) {
     if (input.getRowCount() == 0) {
-      return false;
+      return 0L;
     }
 
-    return hasAnyTrue(input.getNativeView());
+    return falseCount(input.getNativeView());
   }
 
-  private static native boolean hasAnyTrue(long handle) throws CudfException;
+  /**
+   * Get the number of true values in a boolean/int8/uint8 column.
+   */
+  public static long trueCount(ColumnView input) {
+    return input.getRowCount() - falseCount(input);
+  }
+
+  private static native long falseCount(long handle) throws CudfException;
 }

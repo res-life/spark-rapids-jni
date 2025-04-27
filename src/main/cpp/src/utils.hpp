@@ -18,6 +18,8 @@
 
 #include <cudf/types.hpp>
 
+#include <cuda/std/limits>
+
 namespace spark_rapids_jni {
 
 struct size_type_iterator {
@@ -113,6 +115,24 @@ struct ts_segments {
   {
     return (hour >= 0 && hour < 24) && (minute >= 0 && minute < 60) &&
            (second >= 0 && second < 60) && (microseconds >= 0 && microseconds < 1000000);
+  }
+};
+
+struct overflow_checker {
+  /**
+   * Check overflow for int, long addition
+   */
+  template <typename T>
+  __device__ static bool check_signed_add_overflow(T a, T b, T& result)
+  {
+    if (b > 0 && a > cuda::std::numeric_limits<T>::max() - b) {
+      return true;  // Overflow occurred
+    }
+    if (b < 0 && a < std::numeric_limits<T>::min() - b) {
+      return true;  // Underflow occurred
+    }
+    result = a + b;
+    return false;  // No overflow
   }
 };
 
