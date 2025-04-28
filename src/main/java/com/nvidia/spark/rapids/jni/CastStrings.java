@@ -268,7 +268,7 @@ public class CastStrings {
    *                        ansi_enabled is true, otherwise return null
    * @return a timestamp column
    */
-  public static ColumnVector ToTimestamp(
+  public static ColumnVector toTimestamp(
       ColumnView input,
       String defaultTimeZone,
       boolean ansi_enabled) {

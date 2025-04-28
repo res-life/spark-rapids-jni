@@ -736,14 +736,14 @@ public class CastStringsTest {
       }
     }
     try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
-        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", false);
+        ColumnVector actual = CastStrings.toTimestamp(inputCv, "Z", false);
         ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(expectedTS.toArray(new Long[0]))) {
       AssertUtils.assertColumnsAreEqual(expected, actual);
     }
 
     // 2. test ansi mode true
     try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
-        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", true)) {
+        ColumnVector actual = CastStrings.toTimestamp(inputCv, "Z", true)) {
       Assertions.assertNull(actual);
     }
 
@@ -763,7 +763,7 @@ public class CastStringsTest {
       expectedTS.add(Long.parseLong(row.get(1).toString()));
     }
     try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
-        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", false);
+        ColumnVector actual = CastStrings.toTimestamp(inputCv, "Z", false);
         ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(expectedTS.toArray(new Long[0]))) {
       AssertUtils.assertColumnsAreEqual(expected, actual);
     }
@@ -780,7 +780,7 @@ public class CastStringsTest {
     }
     long days = LocalDate.now().toEpochDay();
     try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
-        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", false);
+        ColumnVector actual = CastStrings.toTimestamp(inputCv, "Z", false);
         HostColumnVector hcv = actual.copyToHost();) {
       long expectedTs1 = (days * 24 * 3600 + 1) * 1000000L;
       long expectedTs2 = ((days + 1) * 24 * 3600 + 1) * 1000000L;
@@ -798,7 +798,7 @@ public class CastStringsTest {
       input.add(row.get(0).toString());
     }
     try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
-        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", true)) {
+        ColumnVector actual = CastStrings.toTimestamp(inputCv, "Z", true)) {
       Assertions.assertNull(actual);
     }
 
@@ -812,7 +812,7 @@ public class CastStringsTest {
       input.add(row.get(0).toString());
     }
     try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
-        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", true)) {
+        ColumnVector actual = CastStrings.toTimestamp(inputCv, "Z", true)) {
       Assertions.assertNull(actual);
     }
   }
@@ -859,7 +859,7 @@ public class CastStringsTest {
       }
     }
     try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
-        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", false);
+        ColumnVector actual = CastStrings.toTimestamp(inputCv, "Z", false);
         ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(
             expectedTS.toArray(new Long[0]))) {
       AssertUtils.assertColumnsAreEqual(expected, actual);
@@ -867,7 +867,7 @@ public class CastStringsTest {
 
     // 2. test ansi mode true
     try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
-        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", true)) {
+        ColumnVector actual = CastStrings.toTimestamp(inputCv, "Z", true)) {
       Assertions.assertNull(actual);
     }
 
@@ -886,7 +886,7 @@ public class CastStringsTest {
       expectedTS.add(Long.parseLong(row.get(1).toString()));
     }
     try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
-        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", false);
+        ColumnVector actual = CastStrings.toTimestamp(inputCv, "Z", false);
         ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(
             expectedTS.toArray(new Long[0]))) {
       AssertUtils.assertColumnsAreEqual(expected, actual);
@@ -903,7 +903,7 @@ public class CastStringsTest {
     }
     long days = LocalDate.now().toEpochDay();
     try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
-        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", false);
+        ColumnVector actual = CastStrings.toTimestamp(inputCv, "Z", false);
         HostColumnVector hcv = actual.copyToHost();) {
       long expectedTs1 = (days * 24 * 3600 + 1) * 1000000L;
       long expectedTs2 = ((days + 1) * 24 * 3600 + 1) * 1000000L;
@@ -920,7 +920,7 @@ public class CastStringsTest {
       input.add(row.get(0).toString());
     }
     try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
-        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", true)) {
+        ColumnVector actual = CastStrings.toTimestamp(inputCv, "Z", true)) {
       Assertions.assertNull(actual);
     }
 
@@ -933,7 +933,7 @@ public class CastStringsTest {
       input.add(row.get(0).toString());
     }
     try (ColumnVector inputCv = ColumnVector.fromStrings(input.toArray(new String[0]));
-        ColumnVector actual = CastStrings.ToTimestamp(inputCv, "Z", true)) {
+        ColumnVector actual = CastStrings.toTimestamp(inputCv, "Z", true)) {
       Assertions.assertNull(actual);
     }
   }
