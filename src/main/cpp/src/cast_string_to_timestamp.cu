@@ -15,7 +15,6 @@
  */
 
 #include "cast_string.hpp"
-#include "timezones.hpp"
 #include "utils.hpp"
 
 #include <cudf/column/column_device_view.cuh>
