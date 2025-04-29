@@ -128,11 +128,43 @@ struct overflow_checker {
     if (b > 0 && a > cuda::std::numeric_limits<T>::max() - b) {
       return true;  // Overflow occurred
     }
-    if (b < 0 && a < std::numeric_limits<T>::min() - b) {
+    if (b < 0 && a < cuda::std::numeric_limits<T>::min() - b) {
       return true;  // Underflow occurred
     }
     result = a + b;
     return false;  // No overflow
+  }
+
+  /**
+   * Calculate the timestamp from epoch seconds and microseconds with checking overflow
+   * @param seconds seconds from epoch
+   * @param microseconds MUST be in range [0, 999999]
+   * @param[out] result timestamp in microseconds
+   * @return true if overflow occurred, flase otherwise
+   */
+  __device__ static bool get_timestamp_with_check(int64_t seconds,
+                                                  int32_t microseconds,
+                                                  int64_t& result)
+  {
+    constexpr int64_t micros_per_sec       = 1000000;
+    constexpr int64_t max_v                = cuda::std::numeric_limits<int64_t>::max();
+    constexpr int64_t min_v                = cuda::std::numeric_limits<int64_t>::min();
+    constexpr int64_t max_positive_seconds = max_v / micros_per_sec;
+    constexpr int64_t min_negative_seconds = min_v / micros_per_sec - 1;
+    result                                 = seconds * micros_per_sec + microseconds;
+    if (seconds > max_positive_seconds || seconds < min_negative_seconds) {
+      return true;  // Overflow occurred
+    }
+
+    if (seconds > 0) { return microseconds > max_v - seconds * micros_per_sec; }
+
+    if (seconds == min_negative_seconds) {
+      // 224192L is calculated from 9999999999999999 / 1000000
+      // BigDecimal(min_negative_seconds) * micros_per_sec - BigDecimal(min_v)
+      return microseconds >= 224192L;
+    }
+
+    return false;
   }
 };
 

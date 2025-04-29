@@ -16,8 +16,6 @@
 
 package com.nvidia.spark.rapids.jni;
 
-import java.time.LocalDate;
-
 import ai.rapids.cudf.*;
 
 /** Utility class for casting between string columns and native type columns */
@@ -163,7 +161,8 @@ public class CastStrings {
    * This is the first phase of casting string with timezone to timestamp.
    * Intermediate result is a struct column with 7 sub-columns:
    * - Parse Result type: 0 Success, 1 invalid e.g. year is 7 digits 1234567
-   * - UTC timestamp
+   * - seconds part of parsed UTC timestamp
+   * - microseconds part of parsed UTC timestamp
    * - Just time in the ts string. If true, then UTC ts is at year 1970-01-01
    * - Timezone type: 0 unspecified, 1 fixed type, 2 other type, 3 invalid
    * - Timezone offset for fixed type, only applies to fixed type
@@ -218,13 +217,14 @@ public class CastStrings {
   static ColumnVector convertToTimestampOnGpu(
       long originInputNullcount, ColumnVector intermediateResult, boolean ansi_enabled) {
     ColumnView invalid = intermediateResult.getChildColumnView(0);
-    ColumnView ts = intermediateResult.getChildColumnView(1);
-    ColumnView justTime = intermediateResult.getChildColumnView(2);
-    ColumnView tzType = intermediateResult.getChildColumnView(3);
-    ColumnView tzOffset = intermediateResult.getChildColumnView(4);
-    ColumnView tzIndex = intermediateResult.getChildColumnView(6);
+    ColumnView ts_seconds = intermediateResult.getChildColumnView(1);
+    ColumnView ts_microseconds = intermediateResult.getChildColumnView(2);    
+    ColumnView justTime = intermediateResult.getChildColumnView(3);
+    ColumnView tzType = intermediateResult.getChildColumnView(4);
+    ColumnView tzOffset = intermediateResult.getChildColumnView(5);
+    ColumnView tzIndex = intermediateResult.getChildColumnView(7);
     try (ColumnVector result = GpuTimeZoneDB.fromTimestampToUtcTimestampWithTzCv(
-        invalid, ts, justTime, tzType, tzOffset, tzIndex)) {
+        invalid, ts_seconds, ts_microseconds, justTime, tzType, tzOffset, tzIndex)) {
       if (ansi_enabled && result.getNullCount() > originInputNullcount) {
         // has new nulls, means has any invalid data,
         // e.g.: format is invalid, year is not supported 7 digits
@@ -239,13 +239,14 @@ public class CastStrings {
   static ColumnVector convertToTimestampOnCpu(
       long originInputNullcount, ColumnVector intermediateResult, boolean ansi_enabled) {
     ColumnView invalid = intermediateResult.getChildColumnView(0);
-    ColumnView ts = intermediateResult.getChildColumnView(1);
-    ColumnView justTime = intermediateResult.getChildColumnView(2);
-    ColumnView tzType = intermediateResult.getChildColumnView(3);
-    ColumnView tzOffset = intermediateResult.getChildColumnView(4);
-    ColumnView tzIndex = intermediateResult.getChildColumnView(6);
+    ColumnView ts_seconds = intermediateResult.getChildColumnView(1);
+    ColumnView ts_microseconds = intermediateResult.getChildColumnView(2);
+    ColumnView justTime = intermediateResult.getChildColumnView(3);
+    ColumnView tzType = intermediateResult.getChildColumnView(4);
+    ColumnView tzOffset = intermediateResult.getChildColumnView(5);
+    ColumnView tzIndex = intermediateResult.getChildColumnView(7);
     try (ColumnVector result = GpuTimeZoneDB.cpuChangeTimestampTzWithTimezones(
-        invalid, ts, justTime, tzType, tzOffset, tzIndex)) {
+        invalid, ts_seconds, ts_microseconds, justTime, tzType, tzOffset, tzIndex)) {
       if (ansi_enabled && result.getNullCount() > originInputNullcount) {
         // has new nulls, means has any invalid data,
         // e.g.: format is invalid, year is not supported 7 digits
@@ -286,9 +287,9 @@ public class CastStrings {
 
       // 3. fallback to cup if has a DST and has a timestamp exceeds max year
       // threshold
-      ColumnView tsCv = parseResult.getChildColumnView(1);
-      ColumnView hasDSTCv = parseResult.getChildColumnView(5);
-      boolean exceedsMaxYearThresholdOfDST = GpuTimeZoneDB.exceedsMaxYearThresholdOfDST(tsCv);
+      ColumnView tsSecondsCv = parseResult.getChildColumnView(1); // seconds col
+      ColumnView hasDSTCv = parseResult.getChildColumnView(6); // DST col
+      boolean exceedsMaxYearThresholdOfDST = GpuTimeZoneDB.exceedsMaxYearThresholdOfDST(tsSecondsCv);
       boolean hasDST = BooleanUtils.trueCount(hasDSTCv) > 0;
       if (exceedsMaxYearThresholdOfDST && hasDST) {
         return convertToTimestampOnCpu(input.getNullCount(),

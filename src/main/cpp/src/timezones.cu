@@ -43,10 +43,7 @@ using struct_view              = cudf::struct_view;
 using table_view               = cudf::table_view;
 
 namespace {
-
-constexpr int64_t MICROSECONDS_PER_SECOND = 1000000;
-constexpr int64_t SECONDS_PER_DAY         = 3600L * 24L;
-constexpr int64_t MICROSECONDS_PER_DAY    = SECONDS_PER_DAY * MICROSECONDS_PER_SECOND;
+constexpr int64_t SECONDS_PER_DAY = 3600L * 24L;
 
 // This device functor uses a binary search to find the instant of the transition
 // to find the right offset to do the transition.
@@ -126,9 +123,10 @@ auto convert_timestamp_tz(column_view const& input,
   return results;
 }
 
-struct convert_long_with_timezones_fn {
+struct convert_with_timezones_fn {
   // inputs
-  int64_t const* input;
+  int64_t const* input_seconds;
+  int32_t const* input_microseconds;
   uint8_t const* invalid;
   uint8_t const* just_time;
   uint8_t const* tz_type;
@@ -159,22 +157,25 @@ struct convert_long_with_timezones_fn {
     }
 
     // 2. check if just time
-    int64_t ts = input[row_idx];
+    int64_t epoch_seconds      = input_seconds[row_idx];
+    int64_t epoch_microseconds = static_cast<int64_t>(input_microseconds[row_idx]);
+
     if (just_time[row_idx]) {
-      // only has time part, add the microseconds of the date part
-      ts += default_epoch_day * MICROSECONDS_PER_DAY;
+      // only has time part, add the seconds of the date part
+      epoch_seconds += default_epoch_day * SECONDS_PER_DAY;
     }
 
     // 3. fixed offset conversion
     if (tz_type[row_idx] == /*Fixed TZ*/ 1) {
       // Fixed offset, offset is in seconds, add the offset
-      auto const converted = ts - tz_offset[row_idx] * MICROSECONDS_PER_SECOND;
-      if (ts > 0 && converted < 0 || ts < 0 && converted > 0) {
-        // overflow
+      int64_t converted_seconds = epoch_seconds - tz_offset[row_idx];
+      int64_t result;
+      if (spark_rapids_jni::overflow_checker::get_timestamp_with_check(
+            converted_seconds, epoch_microseconds, result)) {
         output[row_idx]      = cudf::timestamp_us{cudf::duration_us{0L}};
         output_mask[row_idx] = 0;
       } else {
-        output[row_idx]      = cudf::timestamp_us{cudf::duration_us{converted}};
+        output[row_idx]      = cudf::timestamp_us{cudf::duration_us{result}};
         output_mask[row_idx] = 1;
       }
       return;
@@ -186,7 +187,6 @@ struct convert_long_with_timezones_fn {
     auto const tz_instants  = transitions.child().child(1);
     auto const utc_offsets  = transitions.child().child(2);
 
-    auto const epoch_seconds  = ts / MICROSECONDS_PER_SECOND;
     auto const tz_transitions = cudf::list_device_view{transitions, tz_index};
     auto const list_size      = tz_transitions.size();
 
@@ -198,61 +198,66 @@ struct convert_long_with_timezones_fn {
       thrust::seq, transition_times.begin(), transition_times.end(), epoch_seconds);
     auto const idx         = static_cast<size_type>(thrust::distance(transition_times.begin(), it));
     auto const list_offset = tz_transitions.element_offset(idx - 1);
-    auto const utc_offset  = utc_offsets.element<int32_t>(list_offset) * MICROSECONDS_PER_SECOND;
+    auto const utc_offset  = utc_offsets.element<int32_t>(list_offset);
 
-    long result;
-    if (spark_rapids_jni::overflow_checker::check_signed_add_overflow(ts, -utc_offset, result)) {
-      // overflow
+    int64_t converted_seconds2 = epoch_seconds - utc_offset;
+    int64_t result2;
+    if (spark_rapids_jni::overflow_checker::get_timestamp_with_check(
+          converted_seconds2, epoch_microseconds, result2)) {
       output[row_idx]      = cudf::timestamp_us{cudf::duration_us{0L}};
       output_mask[row_idx] = 0;
     } else {
-      // no overflow
-      output[row_idx]      = cudf::timestamp_us{cudf::duration_us{result}};
+      output[row_idx]      = cudf::timestamp_us{cudf::duration_us{result2}};
       output_mask[row_idx] = 1;
     }
   }
 };
 
-std::unique_ptr<column> convert_long_with_timezones(column_view const& input,
-                                                    column_view const& invalid,
-                                                    column_view const& just_time,
-                                                    column_view const& tz_type,
-                                                    column_view const& tz_offset,
-                                                    table_view const& transitions,
-                                                    column_view const tz_indices,
-                                                    int64_t const default_epoch_day,
-                                                    rmm::cuda_stream_view stream,
-                                                    rmm::device_async_resource_ref mr)
+std::unique_ptr<column> convert_ts_with_timezones(column_view const& input_seconds,
+                                                  column_view const& input_microseconds,
+                                                  column_view const& invalid,
+                                                  column_view const& just_time,
+                                                  column_view const& tz_type,
+                                                  column_view const& tz_offset,
+                                                  table_view const& transitions,
+                                                  column_view const tz_indices,
+                                                  int64_t const default_epoch_day,
+                                                  rmm::cuda_stream_view stream,
+                                                  rmm::device_async_resource_ref mr)
 {
-  CUDF_EXPECTS(input.type().id() == cudf::type_id::INT64, "Input column must be of type INT64");
+  CUDF_EXPECTS(input_seconds.type().id() == cudf::type_id::INT64,
+               "Input column must be of type INT64");
 
   // get the fixed transitions
   auto const ft_cdv_ptr        = column_device_view::create(transitions.column(0), stream);
   auto const fixed_transitions = lists_column_device_view{*ft_cdv_ptr};
 
   auto result = cudf::make_timestamp_column(cudf::data_type{cudf::type_to_id<cudf::timestamp_us>()},
-                                            input.size(),
+                                            input_seconds.size(),
                                             rmm::device_buffer{},
                                             0,
                                             stream,
                                             mr);
-  auto null_mask = cudf::make_fixed_width_column(
-    cudf::data_type{cudf::type_id::UINT8}, input.size(), cudf::mask_state::UNALLOCATED, stream, mr);
+  auto null_mask = cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::UINT8},
+                                                 input_seconds.size(),
+                                                 cudf::mask_state::UNALLOCATED,
+                                                 stream,
+                                                 mr);
 
-  thrust::for_each_n(
-    rmm::exec_policy_nosync(stream),
-    thrust::make_counting_iterator<size_type>(0),
-    input.size(),
-    convert_long_with_timezones_fn{input.begin<int64_t>(),
-                                   invalid.begin<uint8_t>(),
-                                   just_time.begin<uint8_t>(),
-                                   tz_type.begin<uint8_t>(),
-                                   tz_offset.begin<int32_t>(),
-                                   fixed_transitions,
-                                   tz_indices.begin<int32_t>(),
-                                   default_epoch_day,
-                                   result->mutable_view().begin<cudf::timestamp_us>(),
-                                   null_mask->mutable_view().begin<uint8_t>()});
+  thrust::for_each_n(rmm::exec_policy_nosync(stream),
+                     thrust::make_counting_iterator<size_type>(0),
+                     input_seconds.size(),
+                     convert_with_timezones_fn{input_seconds.begin<int64_t>(),
+                                               input_microseconds.begin<int32_t>(),
+                                               invalid.begin<uint8_t>(),
+                                               just_time.begin<uint8_t>(),
+                                               tz_type.begin<uint8_t>(),
+                                               tz_offset.begin<int32_t>(),
+                                               fixed_transitions,
+                                               tz_indices.begin<int32_t>(),
+                                               default_epoch_day,
+                                               result->mutable_view().begin<cudf::timestamp_us>(),
+                                               null_mask->mutable_view().begin<uint8_t>()});
 
   auto [output_bitmask, null_count] = cudf::detail::valid_if(null_mask->view().begin<uint8_t>(),
                                                              null_mask->view().end<uint8_t>(),
@@ -308,7 +313,8 @@ std::unique_ptr<column> convert_utc_timestamp_to_timezone(column_view const& inp
   return convert_timestamp(input, transitions, tz_index, false, stream, mr);
 }
 
-std::unique_ptr<column> convert_timestamp_to_utc(column_view const& input,
+std::unique_ptr<column> convert_timestamp_to_utc(column_view const& input_seconds,
+                                                 column_view const& input_microseconds,
                                                  column_view const& invalid,
                                                  column_view const& just_time,
                                                  column_view const& tz_type,
@@ -319,16 +325,17 @@ std::unique_ptr<column> convert_timestamp_to_utc(column_view const& input,
                                                  rmm::cuda_stream_view stream,
                                                  rmm::device_async_resource_ref mr)
 {
-  return convert_long_with_timezones(input,
-                                     invalid,
-                                     just_time,
-                                     tz_type,
-                                     tz_offset,
-                                     transitions,
-                                     tz_indices,
-                                     default_epoch_day,
-                                     stream,
-                                     mr);
+  return convert_ts_with_timezones(input_seconds,
+                                   input_microseconds,
+                                   invalid,
+                                   just_time,
+                                   tz_type,
+                                   tz_offset,
+                                   transitions,
+                                   tz_indices,
+                                   default_epoch_day,
+                                   stream,
+                                   mr);
 }
 
 }  // namespace spark_rapids_jni

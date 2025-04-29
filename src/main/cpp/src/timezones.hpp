@@ -68,7 +68,8 @@ std::unique_ptr<cudf::column> convert_utc_timestamp_to_timezone(
   rmm::device_async_resource_ref mr = rmm::mr::get_current_device_resource());
 
 std::unique_ptr<cudf::column> convert_timestamp_to_utc(
-  cudf::column_view const& input,
+  cudf::column_view const& input_seconds,
+  cudf::column_view const& input_microseconds,
   cudf::column_view const& invalid,
   cudf::column_view const& just_time,
   cudf::column_view const& tz_type,

@@ -55,7 +55,8 @@ JNIEXPORT jlong JNICALL
 Java_com_nvidia_spark_rapids_jni_GpuTimeZoneDB_convertTimestampColumnToUTCWithTzCv(
   JNIEnv* env,
   jclass,
-  jlong input_handle,
+  jlong input_seconds_handle,
+  jlong input_microseconds_handle,
   jlong invalid_handle,
   jlong just_time_handle,
   jlong tz_type_handle,
@@ -64,7 +65,8 @@ Java_com_nvidia_spark_rapids_jni_GpuTimeZoneDB_convertTimestampColumnToUTCWithTz
   jlong tz_indices_handle,
   jlong default_epoch_day)
 {
-  JNI_NULL_CHECK(env, input_handle, "column is null", 0);
+  JNI_NULL_CHECK(env, input_seconds_handle, "column is null", 0);
+  JNI_NULL_CHECK(env, input_microseconds_handle, "column is null", 0);
   JNI_NULL_CHECK(env, invalid_handle, "column is null", 0);
   JNI_NULL_CHECK(env, just_time_handle, "column is null", 0);
   JNI_NULL_CHECK(env, tz_type_handle, "column is null", 0);
@@ -74,7 +76,9 @@ Java_com_nvidia_spark_rapids_jni_GpuTimeZoneDB_convertTimestampColumnToUTCWithTz
 
   try {
     cudf::jni::auto_set_device(env);
-    auto const input       = reinterpret_cast<cudf::column_view const*>(input_handle);
+    auto const input_seconds = reinterpret_cast<cudf::column_view const*>(input_seconds_handle);
+    auto const input_microseconds =
+      reinterpret_cast<cudf::column_view const*>(input_microseconds_handle);
     auto const invalid     = reinterpret_cast<cudf::column_view const*>(invalid_handle);
     auto const just_time   = reinterpret_cast<cudf::column_view const*>(just_time_handle);
     auto const tz_type     = reinterpret_cast<cudf::column_view const*>(tz_type_handle);
@@ -82,7 +86,8 @@ Java_com_nvidia_spark_rapids_jni_GpuTimeZoneDB_convertTimestampColumnToUTCWithTz
     auto const transitions = reinterpret_cast<cudf::table_view const*>(transitions_handle);
     auto const tz_indices  = reinterpret_cast<cudf::column_view const*>(tz_indices_handle);
 
-    return cudf::jni::ptr_as_jlong(spark_rapids_jni::convert_timestamp_to_utc(*input,
+    return cudf::jni::ptr_as_jlong(spark_rapids_jni::convert_timestamp_to_utc(*input_seconds,
+                                                                              *input_microseconds,
                                                                               *invalid,
                                                                               *just_time,
                                                                               *tz_type,

@@ -163,8 +163,8 @@ public class GpuTimeZoneDB {
     } else if (inputType == DType.TIMESTAMP_MICROSECONDS){
       return 1000*1000;
     } else if (inputType == DType.INT64) {
-      // This is for microseconds in long
-      return 1000*1000;
+      // This is for seconds in long, this is for casting from string to timestamp
+      return 1;
     }
     throw new UnsupportedOperationException("Unsupported data type: " + inputType);
   }
@@ -291,7 +291,8 @@ public class GpuTimeZoneDB {
    * timestamp to timestamp.
    * This function is used for casting string with timezone to timestamp
    * 
-   * @param input    UTC timestamp column
+   * @param input_seconds    second part of UTC timestamp column
+   * @param input_microseconds    microseconds part of UTC timestamp column
    * @param invalid  if the parsing from string to timestamp is valid
    * @param justTime if the timestamp string is just time, no timezone
    * @param tzType   if the timezone in string is fixed offset or not
@@ -301,7 +302,8 @@ public class GpuTimeZoneDB {
    */
   public static ColumnVector cpuChangeTimestampTzWithTimezones(
       ColumnView invalid,
-      ColumnView input,
+      ColumnView input_seconds,
+      ColumnView input_microseconds,
       ColumnView justTime,
       ColumnView tzType,
       ColumnView tzOffset,
@@ -309,15 +311,14 @@ public class GpuTimeZoneDB {
     verifyDatabaseCached();
     long defaultEpochDay = LocalDate.now().toEpochDay();
     ColumnVector resultCV = null;
-    try (HostColumnVector hostInput = input.copyToHost();
+    try (HostColumnVector hostInput = input_seconds.copyToHost();
+        HostColumnVector hostMicroInput = input_microseconds.copyToHost();
         HostColumnVector hostInvalid = invalid.copyToHost();
         HostColumnVector hostJustTime = justTime.copyToHost();
         HostColumnVector hostTzType = tzType.copyToHost();
         HostColumnVector hostTzOffset = tzOffset.copyToHost();
         HostColumnVector hostTzIndex = tzIndex.copyToHost()) {
       int rows = (int) hostInput.getRowCount();
-      // input always in microseconds
-      long scaleFactor = 1000 * 1000;
 
       try (HostColumnVector.Builder builder = HostColumnVector.builder(DType.TIMESTAMP_MICROSECONDS, rows)) {
         for (int i = 0; i < rows; i++) {
@@ -327,18 +328,22 @@ public class GpuTimeZoneDB {
             continue;
           }
 
-          long timestamp = hostInput.getLong(i);
+          long seconds = hostInput.getLong(i);
+          long microseconds = hostMicroInput.getInt(i);
+
           if (hostJustTime.getByte(i) != 0) {
             // just time, no timezone
-            timestamp += (defaultEpochDay * 24 * 3600 * scaleFactor);
+            seconds += (defaultEpochDay * 24 * 3600);
           }
 
           if (hostTzType.getByte(i) == 1) {
-            // fixed offset
+            // fixed offset in seconds
             int offset = hostTzOffset.getInt(i);
             try {
-              long toTimestamp = Math.addExact(timestamp, -(offset * scaleFactor));
-              builder.append(toTimestamp);
+              seconds = Math.addExact(seconds, -offset);
+              long microsecondsForSeconds = Math.multiplyExact(seconds, 1000000L);
+              long result = Math.addExact(microsecondsForSeconds, microseconds);
+              builder.append(result);
             } catch (ArithmeticException e) {
               // overflow
               builder.appendNull();
@@ -346,8 +351,7 @@ public class GpuTimeZoneDB {
             continue;
           }
 
-          timestamp /= scaleFactor;
-          Instant instant = Instant.ofEpochSecond(timestamp);
+          Instant instant = Instant.ofEpochSecond(seconds, microseconds * 1000L);
 
           // get the timezone index
           int tzIndexToTzInfo = hostTzIndex.getInt(i);
@@ -357,8 +361,8 @@ public class GpuTimeZoneDB {
           Instant toInstance = instant.atZone(utcZoneId).toLocalDateTime()
               .atZone(ZoneId.of(normalizedTz)).toInstant();
           try {
-            timestamp = instantToMicros(toInstance);
-            builder.append(timestamp);
+            seconds = instantToMicros(toInstance);
+            builder.append(seconds);
           } catch (ArithmeticException e) {
             // overflow
             builder.appendNull();
@@ -623,7 +627,8 @@ public class GpuTimeZoneDB {
    */
   public static ColumnVector fromTimestampToUtcTimestampWithTzCv(
       ColumnView invalid,
-      ColumnView input,
+      ColumnView input_seconds,
+      ColumnView input_microseconds,
       ColumnView justTime,
       ColumnView tzType,
       ColumnView tzOffset,
@@ -631,7 +636,8 @@ public class GpuTimeZoneDB {
     long defaultEpochDay = LocalDate.now().toEpochDay();
     try (Table transitions = getTransitions()) {
       return new ColumnVector(convertTimestampColumnToUTCWithTzCv(
-          input.getNativeView(),
+          input_seconds.getNativeView(),
+          input_microseconds.getNativeView(),
           invalid.getNativeView(),
           justTime.getNativeView(),
           tzType.getNativeView(),
@@ -647,7 +653,7 @@ public class GpuTimeZoneDB {
   private static native long convertUTCTimestampColumnToTimeZone(long input, long transitions, int tzIndex);
 
   private static native long convertTimestampColumnToUTCWithTzCv(
-      long input, long invalid, long justTime, long tzType,
+      long input_seconds, long input_microseconds, long invalid, long justTime, long tzType,
       long tzOffset, long transitions, long tzIndex, long defaultEpochDay);
 
 }
