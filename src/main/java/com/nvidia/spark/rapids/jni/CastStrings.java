@@ -280,8 +280,9 @@ public class CastStrings {
     }
 
     // 2. parse to intermediate result
-    try (ColumnVector parseResult = parseTimestampStrings(
-        input, defaultTimeZoneIndex, GpuTimeZoneDB.getTimeZoneInfo())) {
+    try (ColumnVector tzInfo = GpuTimeZoneDB.getTimeZoneInfo();
+        ColumnVector parseResult = parseTimestampStrings(
+            input, defaultTimeZoneIndex, tzInfo)) {
 
       // 3. fallback to cup if has a DST and has a timestamp exceeds max year
       // threshold
