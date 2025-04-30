@@ -128,7 +128,6 @@ struct convert_with_timezones_fn {
   int64_t const* input_seconds;
   int32_t const* input_microseconds;
   uint8_t const* invalid;
-  uint8_t const* just_time;
   uint8_t const* tz_type;
   int32_t const* tz_offset;
   // The list column of transitions to figure out the correct offset
@@ -136,7 +135,6 @@ struct convert_with_timezones_fn {
   // LIST<STRUCT<utcInstant: int64, tzInstant: int64, utcOffset: int32>>.
   lists_column_device_view const transitions;
   int32_t const* tz_indices;
-  int64_t const default_epoch_day;
 
   // outputs
   cudf::timestamp_us* output;
@@ -156,14 +154,8 @@ struct convert_with_timezones_fn {
       return;
     }
 
-    // 2. check if just time
     int64_t epoch_seconds      = input_seconds[row_idx];
     int64_t epoch_microseconds = static_cast<int64_t>(input_microseconds[row_idx]);
-
-    if (just_time[row_idx]) {
-      // only has time part, add the seconds of the date part
-      epoch_seconds += default_epoch_day * SECONDS_PER_DAY;
-    }
 
     // 3. fixed offset conversion
     if (tz_type[row_idx] == /*Fixed TZ*/ 1) {
@@ -216,12 +208,10 @@ struct convert_with_timezones_fn {
 std::unique_ptr<column> convert_ts_with_timezones(column_view const& input_seconds,
                                                   column_view const& input_microseconds,
                                                   column_view const& invalid,
-                                                  column_view const& just_time,
                                                   column_view const& tz_type,
                                                   column_view const& tz_offset,
                                                   table_view const& transitions,
                                                   column_view const tz_indices,
-                                                  int64_t const default_epoch_day,
                                                   rmm::cuda_stream_view stream,
                                                   rmm::device_async_resource_ref mr)
 {
@@ -250,12 +240,10 @@ std::unique_ptr<column> convert_ts_with_timezones(column_view const& input_secon
                      convert_with_timezones_fn{input_seconds.begin<int64_t>(),
                                                input_microseconds.begin<int32_t>(),
                                                invalid.begin<uint8_t>(),
-                                               just_time.begin<uint8_t>(),
                                                tz_type.begin<uint8_t>(),
                                                tz_offset.begin<int32_t>(),
                                                fixed_transitions,
                                                tz_indices.begin<int32_t>(),
-                                               default_epoch_day,
                                                result->mutable_view().begin<cudf::timestamp_us>(),
                                                null_mask->mutable_view().begin<uint8_t>()});
 
@@ -316,24 +304,20 @@ std::unique_ptr<column> convert_utc_timestamp_to_timezone(column_view const& inp
 std::unique_ptr<column> convert_timestamp_to_utc(column_view const& input_seconds,
                                                  column_view const& input_microseconds,
                                                  column_view const& invalid,
-                                                 column_view const& just_time,
                                                  column_view const& tz_type,
                                                  column_view const& tz_offset,
                                                  table_view const& transitions,
                                                  column_view const tz_indices,
-                                                 int64_t const default_epoch_day,
                                                  rmm::cuda_stream_view stream,
                                                  rmm::device_async_resource_ref mr)
 {
   return convert_ts_with_timezones(input_seconds,
                                    input_microseconds,
                                    invalid,
-                                   just_time,
                                    tz_type,
                                    tz_offset,
                                    transitions,
                                    tz_indices,
-                                   default_epoch_day,
                                    stream,
                                    mr);
 }

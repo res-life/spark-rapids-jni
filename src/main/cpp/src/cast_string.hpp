@@ -152,6 +152,7 @@ std::unique_ptr<cudf::column> long_to_binary_string(
 std::unique_ptr<cudf::column> parse_timestamp_strings(
   cudf::strings_column_view const& input,
   cudf::size_type const default_tz_index,
+  int64_t const default_epoch_day,
   cudf::column_view const& tz_info,
   rmm::cuda_stream_view stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());

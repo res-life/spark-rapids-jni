@@ -291,30 +291,28 @@ public class GpuTimeZoneDB {
    * timestamp to timestamp.
    * This function is used for casting string with timezone to timestamp
    * 
-   * @param input_seconds    second part of UTC timestamp column
-   * @param input_microseconds    microseconds part of UTC timestamp column
-   * @param invalid  if the parsing from string to timestamp is valid
-   * @param justTime if the timestamp string is just time, no timezone
-   * @param tzType   if the timezone in string is fixed offset or not
-   * @param tzOffset the tz offset value, only applies to fixed type timezone
-   * @param tzIndex  the index to the timezone transition/timeZoneInfo table
+   * @param input_seconds      second part of UTC timestamp column
+   * @param input_microseconds microseconds part of UTC timestamp column
+   * @param invalid            if the parsing from string to timestamp is valid
+   * @param tzType             if the timezone in string is fixed offset or not
+   * @param tzOffset           the tz offset value, only applies to fixed type
+   *                           timezone
+   * @param tzIndex            the index to the timezone transition/timeZoneInfo
+   *                           table
    * @return
    */
   public static ColumnVector cpuChangeTimestampTzWithTimezones(
       ColumnView invalid,
       ColumnView input_seconds,
       ColumnView input_microseconds,
-      ColumnView justTime,
       ColumnView tzType,
       ColumnView tzOffset,
       ColumnView tzIndex) {
     verifyDatabaseCached();
-    long defaultEpochDay = LocalDate.now().toEpochDay();
     ColumnVector resultCV = null;
     try (HostColumnVector hostInput = input_seconds.copyToHost();
         HostColumnVector hostMicroInput = input_microseconds.copyToHost();
         HostColumnVector hostInvalid = invalid.copyToHost();
-        HostColumnVector hostJustTime = justTime.copyToHost();
         HostColumnVector hostTzType = tzType.copyToHost();
         HostColumnVector hostTzOffset = tzOffset.copyToHost();
         HostColumnVector hostTzIndex = tzIndex.copyToHost()) {
@@ -330,11 +328,6 @@ public class GpuTimeZoneDB {
 
           long seconds = hostInput.getLong(i);
           long microseconds = hostMicroInput.getInt(i);
-
-          if (hostJustTime.getByte(i) != 0) {
-            // just time, no timezone
-            seconds += (defaultEpochDay * 24 * 3600);
-          }
 
           if (hostTzType.getByte(i) == 1) {
             // fixed offset in seconds
@@ -629,22 +622,18 @@ public class GpuTimeZoneDB {
       ColumnView invalid,
       ColumnView input_seconds,
       ColumnView input_microseconds,
-      ColumnView justTime,
       ColumnView tzType,
       ColumnView tzOffset,
       ColumnView tzIndex) {
-    long defaultEpochDay = LocalDate.now().toEpochDay();
     try (Table transitions = getTransitions()) {
       return new ColumnVector(convertTimestampColumnToUTCWithTzCv(
           input_seconds.getNativeView(),
           input_microseconds.getNativeView(),
           invalid.getNativeView(),
-          justTime.getNativeView(),
           tzType.getNativeView(),
           tzOffset.getNativeView(),
           transitions.getNativeView(),
-          tzIndex.getNativeView(),
-          defaultEpochDay));
+          tzIndex.getNativeView()));
     }
   }
 
@@ -653,7 +642,7 @@ public class GpuTimeZoneDB {
   private static native long convertUTCTimestampColumnToTimeZone(long input, long transitions, int tzIndex);
 
   private static native long convertTimestampColumnToUTCWithTzCv(
-      long input_seconds, long input_microseconds, long invalid, long justTime, long tzType,
-      long tzOffset, long transitions, long tzIndex, long defaultEpochDay);
+      long input_seconds, long input_microseconds, long invalid, long tzType,
+      long tzOffset, long transitions, long tzIndex);
 
 }
