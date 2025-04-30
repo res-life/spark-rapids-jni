@@ -49,9 +49,9 @@ struct ts_segments {
 
   /**
    * Get epoch day. Can handle years in the range [-1,000,000, 1,000,000].
-   * Refer to https://howardhinnant.github.io/date_algorithms.html#days_from_civil
-   * Spark year is approximately in range [-300,000, 300,000]
-   * std::chrono::year range is [-32,767 , 32,767], here can not use std::chrono::year_month_day
+   * Spark supports years range: [-290307, 294247], so this is enough.
+   * Refer to cuda::std::chrono::year_month_day, its range is [-32,767 , 32,767],
+   * because of year is short type in cuda::std::chrono, so we can not use it.
    */
   __device__ int32_t to_epoch_day() const
   {
