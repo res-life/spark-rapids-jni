@@ -315,6 +315,26 @@ public class CastStrings {
     }
   }
 
+  /**
+   * Parse date strings to date, first trim the input strings.
+   * 
+   * @param input        the input date strings
+   * @param ansi_enabled is Ansi mode enabled
+   * @return date column, or null if it's ansi mode and has invalid input values.
+   */
+  public static ColumnVector toDate(ColumnView input, boolean ansi_enabled) {
+    try (ColumnVector result = new ColumnVector(parseDateStringsToDate(input.getNativeView()))) {
+      if (ansi_enabled && result.getNullCount() > input.getNullCount()) {
+        // has new nulls, means has any invalid data,
+        // e.g.: format is invalid, year is out of range.
+        // protocol: if ansi mode and has any invalid data, return null
+        return null;
+      } else {
+        return result.incRefCount();
+      }
+    }
+  }
+
   private static native long toInteger(long nativeColumnView, boolean ansi_enabled, boolean strip,
       int dtype);
   private static native long toDecimal(long nativeColumnView, boolean ansi_enabled, boolean strip,
@@ -330,5 +350,7 @@ public class CastStrings {
 
   private static native long parseTimestampStrings(
       long input, int defaultTimezoneIndex, long defaultEpochDay, long timeZoneInfo);
+
+  private static native long parseDateStringsToDate(long input);
 
 }

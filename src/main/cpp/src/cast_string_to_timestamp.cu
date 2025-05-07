@@ -622,9 +622,10 @@ __device__ bool parse_from_date(
  * cuda::std::chrono::year_month_day does not check the validity of the
  * date/time. Eg.: 2020-02-30 is valid for cuda::std::chrono::year_month_day.
  */
-__device__ bool is_valid(ts_segments ts, time_zone tz)
+__device__ bool is_valid_for_timestamp(ts_segments const& ts, time_zone const& tz)
 {
-  return ts.is_valid_ts() && is_valid_tz(tz);
+  // Spark supports 6 digits year, here roughly check the year range.
+  return ts.is_valid_ts() && ts.year >= -300000 && ts.year <= 300000 && is_valid_tz(tz);
 }
 
 /**
@@ -635,7 +636,7 @@ __device__ inline RESULT_TYPE to_long_check_max(ts_segments const& ts,
                                                 int64_t& seconds,
                                                 int32_t& microseconds)
 {
-  int32_t const days = ts.to_epoch_day();
+  auto const days = ts.to_epoch_day();
 
   // seconds part
   seconds = (days * 24L * 3600L) + (ts.hour * 3600L) + (ts.minute * 60L) + ts.second;
@@ -696,7 +697,7 @@ __device__ RESULT_TYPE parse_timestamp_string(char const* const ptr,
     if (!parse_from_date(ptr, pos, end_pos, ts, tz)) { return RESULT_TYPE::INVALID; }
   }
 
-  if (!is_valid(ts, tz)) { return RESULT_TYPE::INVALID; }
+  if (!is_valid_for_timestamp(ts, tz)) { return RESULT_TYPE::INVALID; }
 
   if (negative_year_sign) { ts.year = -ts.year; }
   return to_long_check_max(ts, seconds, microseconds);
@@ -872,6 +873,155 @@ std::unique_ptr<cudf::column> parse_ts_strings(cudf::strings_column_view const& 
     num_rows, std::move(output_columns), 0, rmm::device_buffer(), stream, mr);
 }
 
+/**
+ * Parse date string to year, month, day.
+ */
+__device__ bool parse_date(char const* const ptr,
+                           char const* const ptr_end,
+                           spark_rapids_jni::ts_segments& ts)
+{
+  int pos     = 0;
+  int end_pos = ptr_end - ptr;
+
+  // trim left
+  while (pos < end_pos && is_whitespace(ptr[pos])) {
+    pos++;
+  }
+
+  // trim right
+  while (pos < end_pos && is_whitespace(ptr[end_pos - 1])) {
+    end_pos--;
+  }
+
+  if (eof(pos, end_pos)) { return false; }
+
+  // parse year: yyyy[y][y]
+  if (!parse_int(ptr,
+                 pos,
+                 end_pos,
+                 ts.year,
+                 /*min_digits*/ 4,
+                 /*max_digits*/ 6)) {
+    return false;
+  }
+
+  if (eof(pos, end_pos)) {
+    // only has: yyyy[y][y], return early
+    return true;
+  }
+
+  // parse month: -[m]m
+  if (!parse_char(ptr, pos, '-') || !parse_int(ptr,
+                                               pos,
+                                               end_pos,
+                                               ts.month,
+                                               /*min_digits*/ 1,
+                                               /*max_digits*/ 2)) {
+    return false;
+  }
+
+  if (eof(pos, end_pos)) {
+    // only has: yyyy[y][y]-[m]m, return early
+    return true;
+  }
+
+  // parse day: -[d]d
+  if (!parse_char(ptr, pos, '-') || !parse_int(ptr,
+                                               pos,
+                                               end_pos,
+                                               ts.day,
+                                               /*min_digits*/ 1,
+                                               /*max_digits*/ 2)) {
+    return false;
+  }
+
+  if (eof(pos, end_pos)) {
+    // no time part, return early
+    return true;
+  }
+
+  // parse date time separator
+  // ignore the following chars after ' ' or 'T', e.g.: the following are valid:
+  // 2025-01-01T, 2025-01-01 xxx
+  return parse_date_time_separator(ptr, pos);
+}
+
+// for cast to date
+__device__ bool is_valid_for_date(spark_rapids_jni::ts_segments& ts) { return ts.is_valid_ts(); }
+
+struct parse_string_to_date_fn {
+  // input strings
+  cudf::column_device_view d_strings;
+  uint8_t* null_mask;
+  cudf::timestamp_D* output;
+
+  __device__ void operator()(cudf::size_type const idx) const
+  {
+    auto const str         = d_strings.element<cudf::string_view>(idx);
+    auto const str_ptr     = str.data();
+    auto const str_end_ptr = str_ptr + str.size_bytes();
+
+    // parse the date string to ts
+    spark_rapids_jni::ts_segments ts;
+    auto result_success = parse_date(str_ptr, str_end_ptr, ts);
+
+    if (!result_success || !is_valid_for_date(ts)) {
+      null_mask[idx] = 0;
+      output[idx]    = cudf::timestamp_D{cudf::duration_D{0}};
+      return;
+    }
+
+    int64_t days = ts.to_epoch_day();
+    if (days < cuda::std::numeric_limits<int32_t>::min() ||
+        days > cuda::std::numeric_limits<int32_t>::max()) {
+      // exceeds int range.
+      null_mask[idx] = 0;
+      output[idx]    = cudf::timestamp_D{cudf::duration_D{0}};
+    }
+
+    null_mask[idx] = 1;
+    output[idx]    = cudf::timestamp_D{cudf::duration_D{days}};
+  }
+};
+
+/**
+ * Parse strings to dates.
+ */
+std::unique_ptr<cudf::column> parse_to_date(cudf::strings_column_view const& input,
+                                            rmm::cuda_stream_view stream,
+                                            rmm::device_async_resource_ref mr)
+{
+  auto const num_rows = input.size();
+  if (num_rows == 0) {
+    return cudf::make_empty_column(cudf::data_type{cudf::type_to_id<cudf::timestamp_D>()});
+  }
+
+  auto const d_input = cudf::column_device_view::create(input.parent(), stream);
+  auto result = cudf::make_timestamp_column(cudf::data_type{cudf::type_to_id<cudf::timestamp_D>()},
+                                            input.size(),
+                                            rmm::device_buffer{},
+                                            0,
+                                            stream,
+                                            mr);
+  auto null_mask = cudf::make_fixed_width_column(
+    cudf::data_type{cudf::type_id::UINT8}, num_rows, cudf::mask_state::UNALLOCATED, stream, mr);
+
+  thrust::for_each_n(rmm::exec_policy_nosync(stream),
+                     thrust::make_counting_iterator(0),
+                     num_rows,
+                     parse_string_to_date_fn{*d_input,
+                                             null_mask->mutable_view().begin<uint8_t>(),
+                                             result->mutable_view().begin<cudf::timestamp_D>()});
+
+  auto [output_bitmask, null_count] = cudf::detail::valid_if(null_mask->view().begin<uint8_t>(),
+                                                             null_mask->view().end<uint8_t>(),
+                                                             thrust::identity<bool>{},
+                                                             stream,
+                                                             mr);
+  result->set_null_mask(std::move(output_bitmask), null_count);
+  return result;
+}
+
 }  // anonymous namespace
 
 std::unique_ptr<cudf::column> parse_timestamp_strings(cudf::strings_column_view const& input,
@@ -882,6 +1032,13 @@ std::unique_ptr<cudf::column> parse_timestamp_strings(cudf::strings_column_view 
                                                       rmm::device_async_resource_ref mr)
 {
   return parse_ts_strings(input, default_tz_index, default_epoch_day, tz_info, stream, mr);
+}
+
+std::unique_ptr<cudf::column> parse_strings_to_date(cudf::strings_column_view const& input,
+                                                    rmm::cuda_stream_view stream,
+                                                    rmm::device_async_resource_ref mr)
+{
+  return parse_to_date(input, stream, mr);
 }
 
 }  // namespace spark_rapids_jni

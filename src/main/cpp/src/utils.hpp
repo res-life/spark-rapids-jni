@@ -48,19 +48,19 @@ struct ts_segments {
   __device__ bool is_valid_ts() const { return is_valid_date() && is_valid_time(); }
 
   /**
-   * Get epoch day. Can handle years in the range [-1,000,000, 1,000,000].
-   * Spark supports years range: [-290307, 294247], so this is enough.
-   * Refer to cuda::std::chrono::year_month_day, its range is [-32,767 , 32,767],
-   * because of year is short type in cuda::std::chrono, so we can not use it.
+   * Get epoch day.
+   * Note can not use cuda::std::chrono::year_month_day, because year is short type in
+   * cuda::std::chrono, year range in cuda::std::chrono is [-32,767 , 32,767] which is too small.
+   * Spark supports 6 digits year in timestamp and 7 digits year in date.
    */
-  __device__ int32_t to_epoch_day() const
+  __device__ int64_t to_epoch_day() const
   {
     int32_t y          = year - (month <= 2);
     const int32_t era  = (y >= 0 ? y : y - 399) / 400;
     const uint32_t yoe = static_cast<uint32_t>(y - era * 400);                           // [0, 399]
     const uint32_t doy = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1;  // [0, 365]
     const uint32_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;  // [0, 146096]
-    return era * 146097 + doe - 719468;
+    return era * 146097L + doe - 719468L;
   }
 
   // 4-6 digits
@@ -97,8 +97,8 @@ struct ts_segments {
 
   __device__ bool is_valid_date() const
   {
-    // rough check for year range
-    if (year < -300000 || year > 300000) { return false; }
+    // Java year range: [-999,999,999, 999,999,999]
+    if (year < -999999999 || year > 999999999) { return false; }
 
     if (month < 1 || month > 12 || day < 1) {
       return false;  // Invalid month or day

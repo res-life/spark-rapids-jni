@@ -993,4 +993,47 @@ public class CastStringsTest {
       Assertions.assertNull(actual);
     }
   }
+
+  @Test
+  void castStringToDate() {
+    LocalDate expectedDate = LocalDate.of(2025, 1, 1);
+    int expectedDays = (int) expectedDate.toEpochDay();
+    try (ColumnVector inputCv = ColumnVector.fromStrings(
+        null,
+        "2025",
+        "2025-01",
+        "2025-1",
+        "2025-1-1",
+        "2025-1-01",
+        "2025-01-1",
+        "2025-01-01",
+        "2025-01-01T",
+        "2025-01-01Txxx",
+        "2025-01-01 xxx");
+        ColumnVector actual = CastStrings.toDate(inputCv, false);
+        ColumnVector expected = ColumnVector.timestampDaysFromBoxedInts(
+            null,
+            expectedDays,
+            expectedDays,
+            expectedDays,
+            expectedDays,
+            expectedDays,
+            expectedDays,
+            expectedDays,
+            expectedDays,
+            expectedDays,
+            expectedDays)) {
+
+      AssertUtils.assertColumnsAreEqual(expected, actual);
+    }
+  }
+
+  @Test
+  void castStringToDateAnsi() {
+    // 2025x is invalid
+    try (ColumnVector inputCv = ColumnVector.fromStrings("2025", "2025x");
+        ColumnVector actual = CastStrings.toDate(inputCv, true)) {
+      Assertions.assertNull(actual);
+    }
+  }
 }
