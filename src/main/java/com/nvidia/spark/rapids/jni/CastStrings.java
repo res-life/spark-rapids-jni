@@ -322,9 +322,9 @@ public class CastStrings {
    * @param ansi_enabled is Ansi mode enabled
    * @return date column, or null if it's ansi mode and has invalid input values.
    */
-  public static ColumnVector toDate(ColumnView input, boolean ansi_enabled) {
+  public static ColumnVector toDate(ColumnView input, boolean ansiEnabled) {
     try (ColumnVector result = new ColumnVector(parseDateStringsToDate(input.getNativeView()))) {
-      if (ansi_enabled && result.getNullCount() > input.getNullCount()) {
+      if (ansiEnabled && result.getNullCount() > input.getNullCount()) {
         // has new nulls, means has any invalid data,
         // e.g.: format is invalid, year is out of range.
         // protocol: if ansi mode and has any invalid data, return null
