@@ -43,7 +43,6 @@ using struct_view              = cudf::struct_view;
 using table_view               = cudf::table_view;
 
 namespace {
-constexpr int64_t SECONDS_PER_DAY = 3600L * 24L;
 
 // This device functor uses a binary search to find the instant of the transition
 // to find the right offset to do the transition.

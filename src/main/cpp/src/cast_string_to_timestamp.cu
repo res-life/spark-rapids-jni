@@ -895,6 +895,14 @@ __device__ bool parse_date(char const* const ptr,
 
   if (eof(pos, end_pos)) { return false; }
 
+  // parse sign
+  bool negative_year_sign = false;
+  char const sign_c       = ptr[pos];
+  if ('-' == sign_c || '+' == sign_c) {
+    pos++;
+    if ('-' == sign_c) { negative_year_sign = true; }
+  }
+
   // parse year: yyyy[y][y]
   if (!parse_int(ptr,
                  pos,
@@ -904,6 +912,7 @@ __device__ bool parse_date(char const* const ptr,
                  /*max_digits*/ 6)) {
     return false;
   }
+  if (negative_year_sign) { ts.year = -ts.year; }
 
   if (eof(pos, end_pos)) {
     // only has: yyyy[y][y], return early

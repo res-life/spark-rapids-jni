@@ -996,20 +996,20 @@ public class CastStringsTest {
 
   @Test
   void castStringToDate() {
-    LocalDate expectedDate = LocalDate.of(2025, 1, 1);
-    int expectedDays = (int) expectedDate.toEpochDay();
+    int expectedDays = (int)LocalDate.of(2025, 1, 1).toEpochDay();
+    int negExpectedDays = (int)LocalDate.of(-2025, 1, 1).toEpochDay();
     try (ColumnVector inputCv = ColumnVector.fromStrings(
         null,
-        "2025",
-        "2025-01",
-        "2025-1",
+        "  2025",
+        "2025-01 ",
+        "2025-1  ",
         "2025-1-1",
         "2025-1-01",
         "2025-01-1",
         "2025-01-01",
         "2025-01-01T",
-        "2025-01-01Txxx",
-        "2025-01-01 xxx");
+        "+2025-01-01Txxx",
+        "-2025-01-01 xxx");
         ColumnVector actual = CastStrings.toDate(inputCv, false);
         ColumnVector expected = ColumnVector.timestampDaysFromBoxedInts(
             null,
@@ -1022,7 +1022,7 @@ public class CastStringsTest {
             expectedDays,
             expectedDays,
             expectedDays,
-            expectedDays)) {
+            negExpectedDays)) {
 
       AssertUtils.assertColumnsAreEqual(expected, actual);
     }
