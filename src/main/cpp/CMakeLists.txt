@@ -185,7 +185,9 @@ add_library(
   src/BloomFilterJni.cpp
   src/BooleanUtilsJni.cpp
   src/CaseWhenJni.cpp
+  src/CastDateJni.cpp
   src/CastStringJni.cpp
+  src/CastTimestampJni.cpp
   src/DateTimeUtilsJni.cpp
   src/DecimalUtilsJni.cpp
   src/GpuTimeZoneDBJni.cpp
@@ -207,12 +209,14 @@ add_library(
   src/bloom_filter.cu
   src/boolean_utils.cu
   src/case_when.cu
+  src/cast_date.cu
   src/cast_decimal_to_string.cu
   src/cast_float_to_string.cu
   src/cast_long_to_binary_string.cu
   src/cast_string.cu
   src/cast_string_to_float.cu
   src/cast_string_to_timestamp.cu
+  src/cast_timestamp.cu
   src/datetime_rebase.cu
   src/datetime_truncate.cu
   src/decimal_utils.cu
