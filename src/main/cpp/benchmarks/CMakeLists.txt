@@ -86,3 +86,9 @@ ConfigureBench(GET_JSON_OBJECT_BENCH
 
 ConfigureBench(PARSE_URI_BENCH
   parse_uri.cpp)
+
+ConfigureBench(TEST_PROJECTS_BASELINE
+  test_projects_baseline.cu)
+
+ConfigureBench(TEST_PROJECTS_FUSED
+  test_projects_fused.cu)
