@@ -27,22 +27,22 @@
   "devices": [
     {
       "id": 0,
-      "name": "NVIDIA RTX 3500 Ada Generation Laptop GPU",
-      "sm_version": 890,
-      "ptx_version": 890,
-      "sm_default_clock_rate": 1545000000,
-      "number_of_sms": 40,
-      "max_blocks_per_sm": 24,
-      "max_threads_per_sm": 1536,
+      "name": "Quadro RTX 8000",
+      "sm_version": 750,
+      "ptx_version": 750,
+      "sm_default_clock_rate": 1770000000,
+      "number_of_sms": 72,
+      "max_blocks_per_sm": 16,
+      "max_threads_per_sm": 1024,
       "max_threads_per_block": 1024,
       "registers_per_sm": 65536,
       "registers_per_block": 65536,
-      "global_memory_size": 12585664512,
-      "global_memory_bus_peak_clock_rate": 9001000000,
-      "global_memory_bus_width": 192,
-      "global_memory_bus_bandwidth": 432048000000,
-      "l2_cache_size": 50331648,
-      "shared_memory_per_sm": 102400,
+      "global_memory_size": 50953846784,
+      "global_memory_bus_peak_clock_rate": 7001000000,
+      "global_memory_bus_width": 384,
+      "global_memory_bus_bandwidth": 672096000000,
+      "l2_cache_size": 6291456,
+      "shared_memory_per_sm": 65536,
       "shared_memory_per_block": 49152,
       "ecc_state": false
     }
@@ -113,7 +113,7 @@
                 {
                   "name": "value",
                   "type": "int64",
-                  "value": "616"
+                  "value": "1216"
                 }
               ]
             },
@@ -127,7 +127,7 @@
                 {
                   "name": "value",
                   "type": "float64",
-                  "value": "0.001119171"
+                  "value": "0.00043911700000000004"
                 }
               ]
             },
@@ -141,7 +141,7 @@
                 {
                   "name": "value",
                   "type": "float64",
-                  "value": "0.11631582700000001"
+                  "value": "0.011572840000000001"
                 }
               ]
             },
@@ -154,7 +154,7 @@
                 {
                   "name": "value",
                   "type": "float64",
-                  "value": "0.02407065025000002"
+                  "value": "0.007299951383223696"
                 }
               ]
             },
@@ -168,7 +168,7 @@
                 {
                   "name": "value",
                   "type": "float64",
-                  "value": "0.01759059471516408"
+                  "value": "0.0004965844748785791"
                 }
               ]
             },
@@ -181,7 +181,7 @@
                 {
                   "name": "value",
                   "type": "float64",
-                  "value": "0.7307901752743079"
+                  "value": "0.06802572357122806"
                 }
               ]
             },
@@ -195,7 +195,7 @@
                 {
                   "name": "value",
                   "type": "float64",
-                  "value": "0.001112064003944397"
+                  "value": "0.00043558400869369505"
                 }
               ]
             },
@@ -209,7 +209,7 @@
                 {
                   "name": "value",
                   "type": "float64",
-                  "value": "0.1162639389038086"
+                  "value": "0.011569151878356934"
                 }
               ]
             },
@@ -222,7 +222,7 @@
                 {
                   "name": "value",
                   "type": "float64",
-                  "value": "0.024060565645625063"
+                  "value": "0.007296160951403807"
                 }
               ]
             },
@@ -236,7 +236,7 @@
                 {
                   "name": "value",
                   "type": "float64",
-                  "value": "0.01758462890236289"
+                  "value": "0.0004965076290144768"
                 }
               ]
             },
@@ -249,7 +249,7 @@
                 {
                   "name": "value",
                   "type": "float64",
-                  "value": "0.7308485245674308"
+                  "value": "0.06805053127548495"
                 }
               ]
             },
@@ -263,7 +263,7 @@
                 {
                   "name": "value",
                   "type": "float64",
-                  "value": "15.000471272"
+                  "value": "8.907423721"
                 }
               ]
             }
