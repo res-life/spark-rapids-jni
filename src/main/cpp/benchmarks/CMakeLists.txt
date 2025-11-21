@@ -86,4 +86,3 @@ ConfigureBench(GET_JSON_OBJECT_BENCH
 
 ConfigureBench(PARSE_URI_BENCH
   parse_uri.cpp)
-
