@@ -87,12 +87,15 @@ TEST_F(ProjectsBaseline, copy_if_else)
   auto stream = cudf::get_default_stream();
   auto mr     = cudf::get_current_device_resource_ref();
 
+  timer t;
+
   // create input/output table
   auto intput_int_table = create_random_table(n_rows, n_cols, stream, mr);
 
   stream.synchronize();
 
-  timer t;
+  t.print_elapsed_micros();
+  t.reset();
 
   // invoke column by column
   for (int i = 0; i < n_cols; i++) {
