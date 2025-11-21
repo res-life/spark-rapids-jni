@@ -89,10 +89,12 @@ TEST_F(ProjectsBaseline, copy_if_else)
 
   timer t;
 
-  // create input/output table
+  // create input table
   auto intput_int_table = create_random_table(n_rows, n_cols, stream, mr);
 
   stream.synchronize();
+
+  printf("allocate 1 big column time: \n");
 
   t.print_elapsed_micros();
   t.reset();
@@ -109,6 +111,7 @@ TEST_F(ProjectsBaseline, copy_if_else)
 
   stream.synchronize();
 
+  printf("compute time: \n");
   t.print_elapsed_micros();
 
   printf("ProjectsBaseline: Processed %d rows and %d columns\n", n_rows, n_cols);
