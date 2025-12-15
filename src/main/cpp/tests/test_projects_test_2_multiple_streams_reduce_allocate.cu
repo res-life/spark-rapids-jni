@@ -73,20 +73,23 @@ std::unique_ptr<cudf::table> create_random_table(cudf::size_type row_count,
   return std::make_unique<cudf::table>(std::move(cols_vec));
 }
 
-void process_one_stream(cudf::table const& intput_int_table,
+void process_one_stream(int iteration,
+                        cudf::table const& intput_int_table,
                         rmm::cuda_stream_view stream,
                         cudf::size_type stream_idx,
                         cudf::size_type num_cols_per_stream,
                         rmm::device_async_resource_ref mr)
 {
   cudf::size_type col_idx = stream_idx * num_cols_per_stream;
-  for (cudf::size_type i = col_idx; i < col_idx + num_cols_per_stream; i++) {
-    auto const& input_col = intput_int_table.get_column(i);
-    // make bools from null mask
-    auto bools  = cudf::is_valid(input_col.view(), stream, mr);
-    auto scalar = cudf::make_fixed_width_scalar(0, stream, mr);
-    // copy_if_else
-    cudf::copy_if_else(input_col.view(), *scalar, bools->view(), stream, mr);
+  for (int itr = 0; itr < iteration; itr++) {  // run multiple iterations to amplify time
+    for (cudf::size_type i = col_idx; i < col_idx + num_cols_per_stream; i++) {
+      auto const& input_col = intput_int_table.get_column(i);
+      // make bools from null mask
+      auto bools  = cudf::is_valid(input_col.view(), stream, mr);
+      auto scalar = cudf::make_fixed_width_scalar(0, stream, mr);
+      // copy_if_else
+      cudf::copy_if_else(input_col.view(), *scalar, bools->view(), stream, mr);
+    }
   }
 }
 
@@ -124,14 +127,24 @@ TEST_F(ProjectsBaseline, copy_if_else)
   t.print_elapsed_micros();
   t.reset();
 
+  const int numThreads = num_streams_arg;  // Number of threads
+  const int iteration  = 16;               // Number of iterations per thread
+  std::thread threads[numThreads];
+
   // run in multiple streams
   for (int i = 0; i < num_streams_arg; i++) {
     auto const& current_stream = streams[i];
-    process_one_stream(*intput_int_table, current_stream, i, 1, mr);
+    threads[i] =
+      std::thread(process_one_stream, iteration, *intput_int_table, current_stream, i, 1, mr);
   }
 
   // join streams
   cudf::detail::join_streams(streams, stream);
+
+  // Joining threads to ensure they complete before main exits
+  for (int i = 0; i < numThreads; ++i) {
+    threads[i].join();
+  }
 
   stream.synchronize();
 
