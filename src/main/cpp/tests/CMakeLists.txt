@@ -127,3 +127,26 @@ ConfigureTest(CONV
 
 ConfigureTest(MULTIPLY
     multiply.cpp)
+
+ConfigureTest(test_projects_test_1_baseline
+  test_projects_test_1_baseline.cu)
+
+ConfigureTest(test_projects_test_1_fused
+  test_projects_test_1_fused.cu)
+
+ConfigureTest(test_projects_test_2_baseline
+  test_projects_test_2_baseline.cu)
+
+ConfigureTest(test_projects_test_2_reduce_allocate
+  test_projects_test_2_reduce_allocate.cu)
+
+ConfigureTest(test_projects_test_2_reduce_allocate_concat_split
+  test_projects_test_2_reduce_allocate_concat_split.cu)
+
+ConfigureTest(test_projects_test_2_multiple_streams_baseline
+  test_projects_test_2_multiple_streams_baseline.cu)
+
+ConfigureTest(test_projects_test_2_multiple_streams_reduce_allocate
+  test_projects_test_2_multiple_streams_reduce_allocate.cu)
+
+
