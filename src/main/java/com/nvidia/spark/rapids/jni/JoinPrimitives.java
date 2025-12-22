@@ -280,6 +280,88 @@ public class JoinPrimitives {
   }
 
   // =============================================================================
+  // REUSABLE HASH JOIN SUPPORT
+  // =============================================================================
+
+  /**
+   * Build a reusable hash table from the build keys.
+   * <p>
+   * The hash table is built once and can be probed multiple times with different
+   * probe (stream) batches. This is efficient when the build side is constant
+   * (e.g., broadcast join) and joined with multiple stream batches.
+   * </p>
+   * <p>
+   * The caller is responsible for closing the returned ReusableHashJoin when done.
+   * </p>
+   *
+   * @param buildKeys Table containing the join key columns for the build side
+   * @param compareNullsEqual true if null key values should match, false otherwise
+   * @return ReusableHashJoin that can be probed multiple times
+   */
+  public static ReusableHashJoin buildHashTable(Table buildKeys, boolean compareNullsEqual) {
+    return new ReusableHashJoin(buildKeys, compareNullsEqual);
+  }
+
+  /**
+   * Probe a reusable hash table to compute inner join gather maps.
+   * <p>
+   * Returns gather maps for matching rows. The probe table is typically the
+   * stream (left) side, and the hash table was built from the build (right) side.
+   * </p>
+   *
+   * @param hashTable The pre-built hash table from buildHashTable()
+   * @param probeKeys Table containing the join key columns for the probe (stream) side
+   * @return Array of two GatherMaps: [probe_map, build_map]
+   */
+  public static GatherMap[] hashInnerJoinProbe(ReusableHashJoin hashTable, Table probeKeys) {
+    return hashTable.innerJoinProbe(probeKeys);
+  }
+
+  /**
+   * Probe a reusable hash table to compute left outer join gather maps.
+   * <p>
+   * Returns gather maps where all probe rows are included. Unmatched probe rows
+   * have the build index set to the null sentinel value (INT32_MIN).
+   * </p>
+   *
+   * @param hashTable The pre-built hash table from buildHashTable()
+   * @param probeKeys Table containing the join key columns for the probe (left) side
+   * @return Array of two GatherMaps: [probe_map, build_map]
+   */
+  public static GatherMap[] hashLeftOuterJoinProbe(ReusableHashJoin hashTable, Table probeKeys) {
+    return hashTable.leftOuterJoinProbe(probeKeys);
+  }
+
+  /**
+   * Get the output row count for an inner join with a reusable hash table.
+   * <p>
+   * This can be used to estimate memory requirements before computing gather maps.
+   * </p>
+   *
+   * @param hashTable The pre-built hash table from buildHashTable()
+   * @param probeKeys Table containing the join key columns for the probe side
+   * @return Number of rows in the inner join result
+   */
+  public static long hashInnerJoinRowCount(ReusableHashJoin hashTable, Table probeKeys) {
+    return hashTable.innerJoinRowCount(probeKeys);
+  }
+
+  /**
+   * Probe a reusable hash table to compute full outer join gather maps.
+   * <p>
+   * Returns gather maps where all rows from both sides are included.
+   * Unmatched rows have the corresponding index set to the null sentinel value (INT32_MIN).
+   * </p>
+   *
+   * @param hashTable The pre-built hash table from buildHashTable()
+   * @param probeKeys Table containing the join key columns for the probe side
+   * @return Array of two GatherMaps: [probe_map, build_map]
+   */
+  public static GatherMap[] hashFullOuterJoinProbe(ReusableHashJoin hashTable, Table probeKeys) {
+    return hashTable.fullOuterJoinProbe(probeKeys);
+  }
+
+  // =============================================================================
   // PARTITIONED JOIN SUPPORT
   // =============================================================================
 
