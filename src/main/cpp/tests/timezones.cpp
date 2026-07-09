@@ -26,6 +26,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -443,6 +444,59 @@ TEST_F(TimeZoneTest, ConvertOrcTimezonesAppliesBaseOffset)
     cudf::get_current_device_resource_ref());
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(transition_expected, *transition_actual);
+}
+
+TEST_F(TimeZoneTest, ConvertOrcTimezonesCorrectsIgnoredWriterTimezoneEpochBorrow)
+{
+  spark_rapids_jni::dst_rule no_dst{};
+  no_dst.has_dst = 0;
+
+  // cuDF decodes this pre-epoch Asia/Shanghai ORC timestamp relative to the UTC 2015 epoch when
+  // ignoreTimezoneInStripeFooter=true. Applying the Shanghai ORC base offset moves it back before
+  // the Unix epoch, where Apache ORC applies a one-second nanos borrow.
+  auto const input    = micros_col{21'087'883'873L};
+  auto const expected = micros_col{-7'713'116'127L};
+  auto const actual   = spark_rapids_jni::convert_orc_writer_reader_timezones(
+    input,
+    /*base_offset_us=*/int64_t{28'800'000'000},
+    spark_rapids_jni::orc_tz_side{nullptr, 28'800'000, 28'800'000, no_dst},
+    spark_rapids_jni::orc_tz_side{nullptr, 28'800'000, 28'800'000, no_dst},
+    cudf::get_default_stream(),
+    cudf::get_current_device_resource_ref());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *actual);
+}
+
+TEST_F(TimeZoneTest, ConvertOrcTimezonesRecomputesEpochBorrowAfterBaseOffset)
+{
+  spark_rapids_jni::dst_rule no_dst{};
+  no_dst.has_dst = 0;
+
+  struct test_case {
+    int64_t decoded_us;
+    int64_t base_offset_us;
+    int64_t expected_us;
+  };
+  auto const cases = std::array<test_case, 4>{{
+    {-7'713'116'127L, 0L, -7'713'116'127L},
+    {-1'116'127L, -1'000'000L, 883'873L},
+    {9'000'999L, 10'000'000L, -999'001L},
+    {9'001'000L, 10'000'000L, -1'999'000L},
+  }};
+
+  for (auto const& c : cases) {
+    auto const input    = micros_col{c.decoded_us};
+    auto const expected = micros_col{c.expected_us};
+    auto const actual   = spark_rapids_jni::convert_orc_writer_reader_timezones(
+      input,
+      c.base_offset_us,
+      spark_rapids_jni::orc_tz_side{nullptr, 0, 0, no_dst},
+      spark_rapids_jni::orc_tz_side{nullptr, 0, 0, no_dst},
+      cudf::get_default_stream(),
+      cudf::get_current_device_resource_ref());
+
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *actual);
+  }
 }
 
 TEST_F(TimeZoneTest, ConvertOrcTimezonesRejectsInvalidTables)

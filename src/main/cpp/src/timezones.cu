@@ -497,6 +497,55 @@ __device__ static bool is_fixed_offset_tz(tz_side_info const& side)
 }
 
 /**
+ * @brief Apply the ORC base timestamp offset while preserving Apache's negative timestamp borrow.
+ *
+ * ORC stores a timestamp as seconds relative to 2015-01-01 in the writer timezone plus a
+ * non-negative nanos field. For a pre-epoch timestamp with a fractional part, the Apache writer
+ * truncates the seconds toward zero. On read, Apache reconstructs the writer-specific 2015 epoch,
+ * then borrows one second when the resulting seconds are negative and the encoded nanos contribute
+ * at least one millisecond.
+ *
+ * With `ignoreTimezoneInStripeFooter=true`, cuDF instead uses the UTC 2015 epoch when deciding
+ * whether to borrow. The later `base_offset_us` adjustment can move the timestamp across the Unix
+ * epoch, making cuDF's earlier borrow decision incorrect. This function first reconstructs the
+ * value before cuDF's borrow, applies the writer-specific base offset, and then makes the borrow
+ * decision in the same frame as Apache. It can therefore both add a missing borrow and undo one
+ * that cuDF applied before the sign changed.
+ *
+ * For example, the Asia/Shanghai reproducer from rapidsai/cudf#21993 has:
+ *
+ *   decoded_us     =  21'087'883'873  // cuDF used the UTC 2015 epoch; no borrow
+ *   base_offset_us =  28'800'000'000  // Shanghai is UTC+08:00 at the ORC epoch
+ *   unborrowed_us  =  -7'712'116'127  // negative after using the writer-specific epoch
+ *   result_us      =  -7'713'116'127  // Apache-compatible one-second borrow
+ *
+ * The one-millisecond threshold matches cuDF's ORC decoder and the Apache writer's nanos encoding.
+ */
+__device__ static int64_t apply_orc_base_offset(int64_t decoded_us, int64_t base_offset_us)
+{
+  constexpr int64_t MICROS_PER_MILLI  = 1'000;
+  constexpr int64_t MICROS_PER_SECOND = 1'000'000;
+
+  if (base_offset_us == 0) { return decoded_us; }
+
+  // ORC timezone base offsets are second-aligned. For an arbitrary microsecond offset, the
+  // original nanos field cannot be reconstructed reliably, so retain the plain offset behavior.
+  if (base_offset_us % MICROS_PER_SECOND != 0) { return decoded_us - base_offset_us; }
+
+  auto fractional_us = decoded_us % MICROS_PER_SECOND;
+  if (fractional_us < 0) { fractional_us += MICROS_PER_SECOND; }
+
+  bool const has_borrowable_fraction = fractional_us >= MICROS_PER_MILLI;
+  bool const cudf_applied_borrow     = decoded_us < 0 && has_borrowable_fraction;
+
+  auto const unborrowed_us = decoded_us + (cudf_applied_borrow ? MICROS_PER_SECOND : int64_t{0});
+  auto const adjusted_unborrowed_us = unborrowed_us - base_offset_us;
+  bool const apache_applies_borrow  = adjusted_unborrowed_us < 0 && has_borrowable_fraction;
+
+  return adjusted_unborrowed_us - (apache_applies_borrow ? MICROS_PER_SECOND : int64_t{0});
+}
+
+/**
  * @brief Convert a timestamp between ORC writer and reader timezones.
  *
  * Implements org.apache.orc.impl.SerializationUtils.convertBetweenTimezones.
@@ -512,10 +561,9 @@ __device__ static cudf::timestamp_us convert_timestamp_between_timezones(cudf::t
 {
   constexpr int64_t MICROS_PER_MILLI = 1000L;
 
-  int64_t const adjusted_us =
-    static_cast<int64_t>(
-      cuda::std::chrono::duration_cast<cudf::duration_us>(ts.time_since_epoch()).count()) -
-    base_offset_us;
+  int64_t const decoded_us = static_cast<int64_t>(
+    cuda::std::chrono::duration_cast<cudf::duration_us>(ts.time_since_epoch()).count());
+  int64_t const adjusted_us = apply_orc_base_offset(decoded_us, base_offset_us);
 
   // Floor-divide to get epoch millis (handles negative timestamps correctly)
   int64_t const epoch_millis =

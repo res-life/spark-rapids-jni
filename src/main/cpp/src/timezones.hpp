@@ -153,7 +153,9 @@ struct orc_tz_side {
  * @param input The input timestamp column in microseconds.
  * @param base_offset_us Fixed microsecond offset to apply before timezone conversion.
  *        Fuses ORC's base-timestamp adjustment (writer TZ offset at 2015-01-01) into
- *        the kernel, eliminating a separate pass. Pass 0 for no adjustment.
+ *        the kernel, eliminating a separate pass. The adjustment also reconciles the
+ *        negative-timestamp borrow performed by cuDF when the writer timezone is ignored.
+ *        Pass 0 for no adjustment.
  * @param writer writer timezone transition data, offsets, and DST rule.
  * @param reader reader timezone transition data, offsets, and DST rule.
  * @param stream CUDA stream.
