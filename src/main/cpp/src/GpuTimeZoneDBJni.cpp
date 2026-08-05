@@ -17,6 +17,7 @@
 #include "cudf_jni_apis.hpp"
 #include "timezones.hpp"
 
+#include <bit>
 #include <cstdint>
 
 extern "C" {
@@ -186,8 +187,8 @@ JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_GpuTimeZoneDB_convertOr
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    auto const input              = reinterpret_cast<cudf::column_view const*>(input_handle);
-    auto const reader_tz_info_tab = reinterpret_cast<cudf::table_view const*>(reader_tz_info_table);
+    auto const input              = std::bit_cast<cudf::column_view const*>(input_handle);
+    auto const reader_tz_info_tab = std::bit_cast<cudf::table_view const*>(reader_tz_info_table);
     auto const reader_dst         = parse_dst_rule(env, reader_dst_rule);
     cudf::jni::check_java_exception(env);
     auto const reader = spark_rapids_jni::orc_tz_side{
