@@ -209,6 +209,8 @@ add_library(
   src/ArithmeticJni.cpp
   src/BloomFilterJni.cpp
   src/CaseWhenJni.cpp
+  src/AverageAggExampleJni.cpp
+  src/average_agg_example.cu
   src/CastStringJni.cpp
   src/CharsetDecodeJni.cpp
   src/DateTimeUtilsJni.cpp
