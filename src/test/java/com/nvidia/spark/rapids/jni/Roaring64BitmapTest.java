@@ -40,8 +40,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class RoaringBitmapTest {
-  private static byte[] getBytes(SerializedBitmap bitmap) {
+class Roaring64BitmapTest {
+  private static byte[] getBytes(SerializedRoaring64Bitmap bitmap) {
     long length = bitmap.getSerializedSizeInBytes();
     assertTrue(length <= Integer.MAX_VALUE);
     byte[] bytes = new byte[(int) length];
@@ -79,9 +79,9 @@ class RoaringBitmapTest {
 
   @Test
   void emptyProducesValidPortableBitmapAndOwnsBuffer() throws IOException {
-    SerializedBitmap result;
+    SerializedRoaring64Bitmap result;
     try (ColumnVector positions = ColumnVector.fromLongs()) {
-      result = RoaringBitmap.buildAndSerialize64(positions);
+      result = Roaring64Bitmap.buildAndSerialize64(positions);
     }
 
     assertEquals(0, result.getCardinality());
@@ -98,11 +98,11 @@ class RoaringBitmapTest {
     long[] runValues = LongStream.range(1000, 7000).toArray();
     long[] bitsetValues = LongStream.range(0, 5000).map(value -> value * 2).toArray();
     long[] newValues = {
-        RoaringBitmap.MAX_POSITION, 1L << 32, 7, 7, 1000, (1L << 32) + 3, 0
+        Roaring64Bitmap.MAX_POSITION, 1L << 32, 7, 7, 1000, (1L << 32) + 3, 0
     };
     long[] expected = LongStream.concat(LongStream.concat(
             Arrays.stream(new long[] {0, 5, 7, 65537, 1L << 32, (1L << 32) + 2,
-                (1L << 32) + 3, RoaringBitmap.MAX_POSITION}),
+                (1L << 32) + 3, Roaring64Bitmap.MAX_POSITION}),
             Arrays.stream(runValues)), Arrays.stream(bitsetValues))
         .distinct().sorted().toArray();
 
@@ -112,10 +112,10 @@ class RoaringBitmapTest {
          HostMemoryBuffer existingBitset = serializePortable(false, bitsetValues);
          ColumnVector positions = ColumnVector.fromLongs(newValues);
          Cuda.Stream stream = new Cuda.Stream(true);
-         SerializedBitmap first = RoaringBitmap.buildAndSerialize64(
+         SerializedRoaring64Bitmap first = Roaring64Bitmap.buildAndSerialize64(
              positions, new HostMemoryBuffer[] {existingSparse, existingRun, existingBitset},
              DefaultHostMemoryAllocator.get(), stream);
-         SerializedBitmap second = RoaringBitmap.buildAndSerialize64(
+         SerializedRoaring64Bitmap second = Roaring64Bitmap.buildAndSerialize64(
              positions, new HostMemoryBuffer[] {existingSparse, existingRun, existingBitset},
              DefaultHostMemoryAllocator.get(), stream)) {
       assertEquals(expected.length, first.getCardinality());
@@ -128,7 +128,7 @@ class RoaringBitmapTest {
   void consecutiveRangeUsesCompactRunEncoding() throws IOException {
     long[] values = LongStream.range(1234, 11234).toArray();
     try (ColumnVector positions = ColumnVector.fromLongs(values);
-         SerializedBitmap result = RoaringBitmap.buildAndSerialize64(positions)) {
+         SerializedRoaring64Bitmap result = Roaring64Bitmap.buildAndSerialize64(positions)) {
       assertEquals(values.length, result.getCardinality());
       assertTrue(result.getSerializedSizeInBytes() < 128);
       assertArrayEquals(values, deserialize(getBytes(result)).toArray());
@@ -137,12 +137,12 @@ class RoaringBitmapTest {
 
   @Test
   void acceptsJavaBitmapWithOnlyMaximumPosition() throws IOException {
-    try (HostMemoryBuffer existing = serializePortable(false, RoaringBitmap.MAX_POSITION);
+    try (HostMemoryBuffer existing = serializePortable(false, Roaring64Bitmap.MAX_POSITION);
          ColumnVector positions = ColumnVector.fromLongs();
-         SerializedBitmap result = RoaringBitmap.buildAndSerialize64(
+         SerializedRoaring64Bitmap result = Roaring64Bitmap.buildAndSerialize64(
              positions, new HostMemoryBuffer[] {existing}, DefaultHostMemoryAllocator.get())) {
       assertEquals(1, result.getCardinality());
-      assertArrayEquals(new long[] {RoaringBitmap.MAX_POSITION},
+      assertArrayEquals(new long[] {Roaring64Bitmap.MAX_POSITION},
           deserialize(getBytes(result)).toArray());
     }
   }
@@ -150,14 +150,16 @@ class RoaringBitmapTest {
   @Test
   void choosesArrayAndBitsetEncodings() throws IOException {
     try (ColumnVector arrayPositions = ColumnVector.fromLongs(1, 100, 1000);
-         SerializedBitmap arrayResult = RoaringBitmap.buildAndSerialize64(arrayPositions)) {
+         SerializedRoaring64Bitmap arrayResult =
+             Roaring64Bitmap.buildAndSerialize64(arrayPositions)) {
       assertEquals(34, arrayResult.getSerializedSizeInBytes());
       assertArrayEquals(new long[] {1, 100, 1000}, deserialize(getBytes(arrayResult)).toArray());
     }
 
     long[] bitsetValues = LongStream.range(0, 5000).map(value -> value * 2).toArray();
     try (ColumnVector bitsetPositions = ColumnVector.fromLongs(bitsetValues);
-         SerializedBitmap bitsetResult = RoaringBitmap.buildAndSerialize64(bitsetPositions)) {
+         SerializedRoaring64Bitmap bitsetResult =
+             Roaring64Bitmap.buildAndSerialize64(bitsetPositions)) {
       assertEquals(8220, bitsetResult.getSerializedSizeInBytes());
       assertArrayEquals(bitsetValues, deserialize(getBytes(bitsetResult)).toArray());
     }
@@ -180,7 +182,7 @@ class RoaringBitmapTest {
     };
 
     try (ColumnVector positions = ColumnVector.fromLongs(1, 2, 3);
-         SerializedBitmap ignored = RoaringBitmap.buildAndSerialize64(
+         SerializedRoaring64Bitmap ignored = Roaring64Bitmap.buildAndSerialize64(
              positions, new HostMemoryBuffer[0], allocator)) {
       assertTrue(calledWithPinnedPreference.get());
     }
@@ -190,17 +192,17 @@ class RoaringBitmapTest {
   void rejectsInvalidPositionsAndColumns() {
     try (ColumnVector wrongType = ColumnVector.fromInts(1, 2, 3)) {
       assertThrows(IllegalArgumentException.class,
-          () -> RoaringBitmap.buildAndSerialize64(wrongType));
+          () -> Roaring64Bitmap.buildAndSerialize64(wrongType));
     }
     try (ColumnVector withNull = ColumnVector.fromBoxedLongs(1L, null, 2L)) {
       assertThrows(IllegalArgumentException.class,
-          () -> RoaringBitmap.buildAndSerialize64(withNull));
+          () -> Roaring64Bitmap.buildAndSerialize64(withNull));
     }
     try (ColumnVector negative = ColumnVector.fromLongs(-1)) {
-      assertThrows(CudfException.class, () -> RoaringBitmap.buildAndSerialize64(negative));
+      assertThrows(CudfException.class, () -> Roaring64Bitmap.buildAndSerialize64(negative));
     }
-    try (ColumnVector tooLarge = ColumnVector.fromLongs(RoaringBitmap.MAX_POSITION + 1)) {
-      assertThrows(CudfException.class, () -> RoaringBitmap.buildAndSerialize64(tooLarge));
+    try (ColumnVector tooLarge = ColumnVector.fromLongs(Roaring64Bitmap.MAX_POSITION + 1)) {
+      assertThrows(CudfException.class, () -> Roaring64Bitmap.buildAndSerialize64(tooLarge));
     }
   }
 
@@ -209,13 +211,13 @@ class RoaringBitmapTest {
     try (ColumnVector positions = ColumnVector.fromLongs(1);
          HostMemoryBuffer truncated = HostMemoryBuffer.allocate(7)) {
       truncated.setMemory(0, 7, (byte) 0);
-      assertThrows(CudfException.class, () -> RoaringBitmap.buildAndSerialize64(
+      assertThrows(CudfException.class, () -> Roaring64Bitmap.buildAndSerialize64(
           positions, new HostMemoryBuffer[] {truncated}, DefaultHostMemoryAllocator.get()));
     }
 
     try (ColumnVector positions = ColumnVector.fromLongs();
-         HostMemoryBuffer tooLarge = serializePortable(false, RoaringBitmap.MAX_POSITION + 1)) {
-      assertThrows(CudfException.class, () -> RoaringBitmap.buildAndSerialize64(
+         HostMemoryBuffer tooLarge = serializePortable(false, Roaring64Bitmap.MAX_POSITION + 1)) {
+      assertThrows(CudfException.class, () -> Roaring64Bitmap.buildAndSerialize64(
           positions, new HostMemoryBuffer[] {tooLarge}, DefaultHostMemoryAllocator.get()));
     }
   }
@@ -224,15 +226,15 @@ class RoaringBitmapTest {
   void validatesJavaArguments() {
     try (ColumnVector positions = ColumnVector.fromLongs(1)) {
       assertThrows(IllegalArgumentException.class,
-          () -> RoaringBitmap.buildAndSerialize64(positions, null,
+          () -> Roaring64Bitmap.buildAndSerialize64(positions, null,
               DefaultHostMemoryAllocator.get()));
       assertThrows(IllegalArgumentException.class,
-          () -> RoaringBitmap.buildAndSerialize64(positions,
+          () -> Roaring64Bitmap.buildAndSerialize64(positions,
               new HostMemoryBuffer[] {null}, DefaultHostMemoryAllocator.get()));
       assertThrows(IllegalArgumentException.class,
-          () -> RoaringBitmap.buildAndSerialize64(positions, new HostMemoryBuffer[0], null));
+          () -> Roaring64Bitmap.buildAndSerialize64(positions, new HostMemoryBuffer[0], null));
     }
     assertThrows(IllegalArgumentException.class,
-        () -> RoaringBitmap.buildAndSerialize64(null));
+        () -> Roaring64Bitmap.buildAndSerialize64(null));
   }
 }

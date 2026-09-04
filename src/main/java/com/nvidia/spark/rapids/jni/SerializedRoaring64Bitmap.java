@@ -18,32 +18,41 @@ package com.nvidia.spark.rapids.jni;
 
 import ai.rapids.cudf.HostMemoryBuffer;
 
-/** A portable serialized bitmap and its cardinality. */
-public final class SerializedBitmap implements AutoCloseable {
+/**
+ * An owning host-memory representation of a portable Roaring64 bitmap and its cardinality.
+ *
+ * <p>Close this object to release its host buffer. The buffer returned by {@link #getBuffer()} is a
+ * borrowed reference and must not be closed separately or retained after this object is closed.
+ */
+public final class SerializedRoaring64Bitmap implements AutoCloseable {
   private HostMemoryBuffer buffer;
   private final long cardinality;
   private final long serializedSizeInBytes;
 
-  SerializedBitmap(HostMemoryBuffer buffer, long cardinality) {
+  SerializedRoaring64Bitmap(HostMemoryBuffer buffer, long cardinality) {
     this.buffer = buffer;
     this.cardinality = cardinality;
     this.serializedSizeInBytes = buffer.getLength();
   }
 
-  /** Returns the raw portable bitmap payload. */
+  /**
+   * Returns a borrowed reference to the raw portable Roaring64 payload.
+   *
+   * <p>The caller must not close the returned buffer or use it after this object is closed.
+   */
   public HostMemoryBuffer getBuffer() {
     if (buffer == null) {
-      throw new IllegalStateException("SerializedBitmap is closed");
+      throw new IllegalStateException("SerializedRoaring64Bitmap is closed");
     }
     return buffer;
   }
 
-  /** Returns the number of distinct values in the bitmap. */
+  /** Returns the number of distinct positions in the bitmap. */
   public long getCardinality() {
     return cardinality;
   }
 
-  /** Returns the serialized payload size. */
+  /** Returns the raw portable payload size in bytes. */
   public long getSerializedSizeInBytes() {
     return serializedSizeInBytes;
   }

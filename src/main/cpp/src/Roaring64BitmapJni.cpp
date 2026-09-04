@@ -56,7 +56,8 @@ void close_host_buffer_noexcept(JNIEnv* env, jobject buffer) noexcept
 
 extern "C" {
 
-JNIEXPORT jobject JNICALL Java_com_nvidia_spark_rapids_jni_RoaringBitmap_buildAndSerialize64Native(
+JNIEXPORT jobject JNICALL
+Java_com_nvidia_spark_rapids_jni_Roaring64Bitmap_buildAndSerialize64Native(
   JNIEnv* env,
   jclass,
   jlong positions_handle,
