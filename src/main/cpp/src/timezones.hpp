@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -187,6 +187,44 @@ struct orc_tz_side {
 [[nodiscard]] std::unique_ptr<cudf::column> convert_orc_from_utc(
   cudf::column_view const& input,
   orc_tz_side reader,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Convert an ORC timestamp to Spark's timestamp representation.
+ *
+ * Apache ORC decodes timestamps with java.util.TimeZone, while Spark materializes the resulting
+ * java.sql.Timestamp with java.time rules. This fuses the ORC writer/reader conversion with the
+ * historical java.util-to-java.time rebase that Spark applies.
+ *
+ * @param input TIMESTAMP_MICROSECONDS input column.
+ * @param writer_2015_year_base_offset_us Writer timezone offset at ORC's 2015-01-01 base instant.
+ * @param writer Writer timezone transition data, offsets, and DST rule.
+ * @param reader Reader timezone transition data, offsets, and DST rule.
+ * @param java_time_info java.time transition table, or nullptr when no historical rebase is needed.
+ * @param java_time_tz_index Reader timezone row in java_time_info.
+ * @param reader_historical_difference_end_utc_us Exclusive UTC instant upper bound for historical
+ *        rule differences, or INT64_MIN when no historical rebase is needed.
+ * @param reader_historical_difference_end_local_us Exclusive local timestamp upper bound for
+ *        historical rule differences, or INT64_MIN when no historical rebase is needed.
+ * @param input_is_orc_timestamp True for physical ORC timestamps; false for integer-derived local
+ *        timestamps produced by ORC schema evolution.
+ * @param writer_reader_rules_differ Whether Apache ORC would convert between the writer and reader.
+ * @param stream CUDA stream.
+ * @param mr Device memory resource.
+ * @return Spark-compatible timestamps in microseconds.
+ */
+[[nodiscard]] std::unique_ptr<cudf::column> convert_orc_to_spark(
+  cudf::column_view const& input,
+  int64_t writer_2015_year_base_offset_us,
+  orc_tz_side writer,
+  orc_tz_side reader,
+  cudf::table_view const* java_time_info,
+  cudf::size_type java_time_tz_index,
+  int64_t reader_historical_difference_end_utc_us,
+  int64_t reader_historical_difference_end_local_us,
+  bool input_is_orc_timestamp,
+  bool writer_reader_rules_differ,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

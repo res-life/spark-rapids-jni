@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2023-2026, NVIDIA CORPORATION.
+* Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -595,6 +595,7 @@ public class GpuTimeZoneDB {
   public static final class OrcTimezoneContext implements AutoCloseable {
     private Table writerTzInfoTable;
     private Table readerTzInfoTable;
+    private Table readerJavaTimeTzInfoTable;
     private final long writerTzOffsetAtOrc2015BaseUs;
     private final int writerInitialOffset;
     private final int writerRawOffset;
@@ -603,6 +604,10 @@ public class GpuTimeZoneDB {
     private final int readerRawOffset;
     private final int[] readerDstRule;
     private final long readerFirstTransitionUs;
+    private final long readerHistoricalDifferenceEndUtcUs;
+    private final long readerHistoricalDifferenceEndLocalUs;
+    private final String readerJavaTimeZoneId;
+    private int readerJavaTimeTzIndex = -1;
     private final boolean writerReaderRulesDiffer;
     private boolean closed;
 
@@ -624,6 +629,17 @@ public class GpuTimeZoneDB {
               ? Long.MIN_VALUE
               : TimeUnit.MILLISECONDS.toMicros(
                   readerTzInfo.transitions[0] + readerTzInfo.rawOffset);
+      this.readerHistoricalDifferenceEndUtcUs = readerTzInfo.historicalDifferenceEndUtcMillis
+          == Long.MIN_VALUE
+              ? Long.MIN_VALUE
+              : TimeUnit.MILLISECONDS.toMicros(
+                  readerTzInfo.historicalDifferenceEndUtcMillis);
+      this.readerHistoricalDifferenceEndLocalUs = readerTzInfo.historicalDifferenceEndLocalMillis
+          == Long.MIN_VALUE
+              ? Long.MIN_VALUE
+              : TimeUnit.MILLISECONDS.toMicros(
+                  readerTzInfo.historicalDifferenceEndLocalMillis);
+      this.readerJavaTimeZoneId = getZoneId(readerTimezone).normalized().toString();
       TimeZone writerTz = TimeZone.getTimeZone(getZoneId(writerTimezone));
       TimeZone readerTz = TimeZone.getTimeZone(getZoneId(readerTimezone));
       this.writerReaderRulesDiffer = !writerTz.hasSameRules(readerTz);
@@ -641,10 +657,40 @@ public class GpuTimeZoneDB {
       return readerFirstTransitionUs;
     }
 
+    long getReaderHistoricalDifferenceEndUtcUs() {
+      ensureOpen();
+      return readerHistoricalDifferenceEndUtcUs;
+    }
+
+    long getReaderHistoricalDifferenceEndLocalUs() {
+      ensureOpen();
+      return readerHistoricalDifferenceEndLocalUs;
+    }
+
     private void ensureOpen() {
       if (closed) {
         throw new IllegalStateException("ORC timezone context is closed");
       }
+    }
+
+    private void ensureJavaTimeInfo() {
+      ensureOpen();
+      if ((readerHistoricalDifferenceEndUtcUs == Long.MIN_VALUE
+          && readerHistoricalDifferenceEndLocalUs == Long.MIN_VALUE)
+          || readerJavaTimeTzInfoTable != null) {
+        return;
+      }
+
+      Table javaTimeInfo = getTimezoneInfo();
+      Integer tzIndex = zoneIdToTable.get(readerJavaTimeZoneId);
+      if (tzIndex == null) {
+        javaTimeInfo.close();
+        throw new IllegalStateException(
+            "java.time timezone is not present in the GPU timezone database: "
+                + readerJavaTimeZoneId);
+      }
+      readerJavaTimeTzInfoTable = javaTimeInfo;
+      readerJavaTimeTzIndex = tzIndex;
     }
 
     @Override
@@ -655,9 +701,11 @@ public class GpuTimeZoneDB {
       closed = true;
       Table writerTable = writerTzInfoTable;
       Table readerTable = readerTzInfoTable;
+      Table readerJavaTimeTable = readerJavaTimeTzInfoTable;
       writerTzInfoTable = null;
       readerTzInfoTable = null;
-      Arms.closeAll(writerTable, readerTable);
+      readerJavaTimeTzInfoTable = null;
+      Arms.closeAll(writerTable, readerTable, readerJavaTimeTable);
     }
   }
 
@@ -732,6 +780,56 @@ public class GpuTimeZoneDB {
         context.readerInitialOffset,
         context.readerRawOffset,
         context.readerDstRule));
+  }
+
+  /**
+   * Convert a physical ORC timestamp to Spark's timestamp representation.
+   *
+   * <p>This fuses Apache ORC's {@link TimeZone} writer/reader conversion with the historical
+   * {@link ZoneId} rebase performed when Spark materializes a {@code java.sql.Timestamp}.</p>
+   *
+   * @param input physical ORC timestamps read as TIMESTAMP_MICROSECONDS
+   * @param context writer/reader timezone metadata
+   * @return Spark-compatible timestamps in microseconds
+   */
+  public static ColumnVector convertOrcTimestampToSpark(
+      ColumnView input, OrcTimezoneContext context) {
+    return convertOrcToSpark(input, context, true);
+  }
+
+  /**
+   * Convert integer-derived local timestamps produced by ORC schema evolution to Spark timestamps.
+   *
+   * @param input local TIMESTAMP_MICROSECONDS values
+   * @param context timezone metadata whose reader side identifies the target timezone
+   * @return Spark-compatible timestamps in microseconds
+   */
+  public static ColumnVector convertOrcIntegerTimestampToSpark(
+      ColumnView input, OrcTimezoneContext context) {
+    return convertOrcToSpark(input, context, false);
+  }
+
+  private static ColumnVector convertOrcToSpark(
+      ColumnView input, OrcTimezoneContext context, boolean inputIsOrcTimestamp) {
+    context.ensureJavaTimeInfo();
+    return new ColumnVector(convertOrcToSparkWithRules(
+        input.getNativeView(),
+        inputIsOrcTimestamp,
+        context.writerTzOffsetAtOrc2015BaseUs,
+        context.writerTzInfoTable != null ? context.writerTzInfoTable.getNativeView() : 0L,
+        context.writerInitialOffset,
+        context.writerRawOffset,
+        context.writerDstRule,
+        context.readerTzInfoTable != null ? context.readerTzInfoTable.getNativeView() : 0L,
+        context.readerInitialOffset,
+        context.readerRawOffset,
+        context.readerDstRule,
+        context.writerReaderRulesDiffer,
+        context.readerJavaTimeTzInfoTable != null
+            ? context.readerJavaTimeTzInfoTable.getNativeView() : 0L,
+        context.readerJavaTimeTzIndex,
+        context.readerHistoricalDifferenceEndUtcUs,
+        context.readerHistoricalDifferenceEndLocalUs));
   }
 
   /**
@@ -825,4 +923,22 @@ public class GpuTimeZoneDB {
       int readerTzInitialOffset,
       int readerTzRawOffset,
       int[] readerDstRule);
+
+  private static native long convertOrcToSparkWithRules(
+      long input,
+      boolean inputIsOrcTimestamp,
+      long writerTzOffsetAtOrc2015BaseUs,
+      long writerTzInfoTable,
+      int writerTzInitialOffset,
+      int writerTzRawOffset,
+      int[] writerDstRule,
+      long readerTzInfoTable,
+      int readerTzInitialOffset,
+      int readerTzRawOffset,
+      int[] readerDstRule,
+      boolean writerReaderRulesDiffer,
+      long javaTimeInfoTable,
+      int javaTimeTzIndex,
+      long readerHistoricalDifferenceEndUtcUs,
+      long readerHistoricalDifferenceEndLocalUs);
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -126,6 +127,39 @@ public class GpuTimeZoneDBTest {
           (millis + finalDiffs) * microsPerMillis + Math.floorMod(adjustedUs, microsPerMillis);
     }
     return ColumnVector.timestampMicroSecondsFromLongs(results);
+  }
+
+  private static long convertOrcTimezonesOnCPU(
+      long microseconds, String writerTzId, String readerTzId) {
+    TimeZone writerTz = getTimeZoneForOrc(writerTzId);
+    TimeZone readerTz = getTimeZoneForOrc(readerTzId);
+    long adjustedUs = applyOrcBaseOffsetOnCPU(
+        microseconds, orc2015YearBaseOffsetUs(writerTzId));
+    long millis = Math.floorDiv(adjustedUs, microsPerMillis);
+    long writerOffset = writerTz.getOffset(millis);
+    long readerOffset = readerTz.getOffset(millis);
+    long adjustedMillis = millis + writerOffset - readerOffset;
+    long adjustedReaderOffset = readerTz.getOffset(adjustedMillis);
+    return adjustedUs + (writerOffset - adjustedReaderOffset) * microsPerMillis;
+  }
+
+  private static long convertJavaTimeLocalToUtc(long localMicros, String readerTzId) {
+    long epochSeconds = Math.floorDiv(localMicros, MICROS_PER_SECOND);
+    int nanos = Math.toIntExact(
+        Math.floorMod(localMicros, MICROS_PER_SECOND) * TimeUnit.MICROSECONDS.toNanos(1));
+    long utcSeconds = LocalDateTime.ofEpochSecond(epochSeconds, nanos, ZoneOffset.UTC)
+        .atZone(GpuTimeZoneDB.getZoneId(readerTzId))
+        .toEpochSecond();
+    return utcSeconds * MICROS_PER_SECOND + Math.floorMod(localMicros, MICROS_PER_SECOND);
+  }
+
+  private static long convertPhysicalOrcTimestampToSparkOnCPU(
+      long microseconds, String writerTzId, String readerTzId) {
+    long orcInstant = convertOrcTimezonesOnCPU(microseconds, writerTzId, readerTzId);
+    TimeZone readerTz = getTimeZoneForOrc(readerTzId);
+    long readerLocal = orcInstant
+        + readerTz.getOffset(Math.floorDiv(orcInstant, microsPerMillis)) * microsPerMillis;
+    return convertJavaTimeLocalToUtc(readerLocal, readerTzId);
   }
 
   private static ColumnVector convertOrcFromUtcOnCPU(
@@ -335,6 +369,10 @@ public class GpuTimeZoneDBTest {
           () -> GpuTimeZoneDB.convertOrcTimezones(input, closed));
       assertThrows(IllegalStateException.class,
           () -> GpuTimeZoneDB.convertOrcFromUtc(input, closed));
+      assertThrows(IllegalStateException.class,
+          () -> GpuTimeZoneDB.convertOrcTimestampToSpark(input, closed));
+      assertThrows(IllegalStateException.class,
+          () -> GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(input, closed));
     }
 
     try (ColumnVector input = ColumnVector.timestampSecondsFromLongs(0L);
@@ -344,6 +382,97 @@ public class GpuTimeZoneDBTest {
           () -> GpuTimeZoneDB.convertOrcTimezones(input, context));
       assertThrows(CudfException.class,
           () -> GpuTimeZoneDB.convertOrcFromUtc(input, context));
+      assertThrows(CudfException.class,
+          () -> GpuTimeZoneDB.convertOrcTimestampToSpark(input, context));
+      assertThrows(CudfException.class,
+          () -> GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(input, context));
+    }
+  }
+
+  @Test
+  void testConvertPhysicalOrcTimestampToSparkAcrossNewYorkLmtTransition() {
+    GpuTimeZoneDB.cacheDatabase();
+    String timezoneId = "America/New_York";
+    long orcInstant = -2_717_655_100_076_025L;
+    long decodedMicros = orcInstant + orc2015YearBaseOffsetUs(timezoneId);
+    long expectedMicros = convertPhysicalOrcTimestampToSparkOnCPU(
+        decodedMicros, timezoneId, timezoneId);
+    assertEquals(-2_717_655_338_076_025L, expectedMicros);
+
+    try (ColumnVector input = ColumnVector.timestampMicroSecondsFromLongs(decodedMicros);
+        ColumnVector expected = ColumnVector.timestampMicroSecondsFromLongs(expectedMicros);
+        GpuTimeZoneDB.OrcTimezoneContext context =
+            GpuTimeZoneDB.buildOrcTimezoneContext(timezoneId, timezoneId);
+        ColumnVector actual = GpuTimeZoneDB.convertOrcTimestampToSpark(input, context)) {
+      assertColumnsAreEqual(expected, actual);
+    }
+  }
+
+  @Test
+  void testConvertIntegerOrcTimestampToSparkBeforeShanghaiFirstTransition() {
+    GpuTimeZoneDB.cacheDatabase();
+    String timezoneId = "Asia/Shanghai";
+    long localMicros = -2_208_988_800L * MICROS_PER_SECOND;
+    long expectedMicros = convertJavaTimeLocalToUtc(localMicros, timezoneId);
+
+    try (ColumnVector input = ColumnVector.timestampMicroSecondsFromLongs(localMicros);
+        ColumnVector expected = ColumnVector.timestampMicroSecondsFromLongs(expectedMicros);
+        GpuTimeZoneDB.OrcTimezoneContext context =
+            GpuTimeZoneDB.buildOrcTimezoneContext(timezoneId, timezoneId);
+        ColumnVector actual = GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(input, context)) {
+      assertColumnsAreEqual(expected, actual);
+    }
+  }
+
+  @Test
+  void testHistoricalRebaseWithoutTimeZoneTransitions() {
+    GpuTimeZoneDB.cacheDatabase();
+    String timezoneId = "Pacific/Port_Moresby";
+    OrcTimezoneInfo timezoneInfo = OrcTimezoneInfo.get(timezoneId);
+    assertTrue(timezoneInfo.transitions == null);
+
+    long orcInstant = Instant.parse("1870-01-01T00:00:00Z").getEpochSecond()
+        * MICROS_PER_SECOND;
+    long decodedMicros = orcInstant + orc2015YearBaseOffsetUs(timezoneId);
+    long expectedPhysicalMicros = convertPhysicalOrcTimestampToSparkOnCPU(
+        decodedMicros, timezoneId, timezoneId);
+    long localMicros = Instant.parse("1870-01-01T10:00:00Z").getEpochSecond()
+        * MICROS_PER_SECOND;
+    long expectedIntegerMicros = convertJavaTimeLocalToUtc(localMicros, timezoneId);
+
+    try (ColumnVector physicalInput = ColumnVector.timestampMicroSecondsFromLongs(decodedMicros);
+        ColumnVector expectedPhysical =
+            ColumnVector.timestampMicroSecondsFromLongs(expectedPhysicalMicros);
+        ColumnVector integerInput = ColumnVector.timestampMicroSecondsFromLongs(localMicros);
+        ColumnVector expectedInteger =
+            ColumnVector.timestampMicroSecondsFromLongs(expectedIntegerMicros);
+        GpuTimeZoneDB.OrcTimezoneContext context =
+            GpuTimeZoneDB.buildOrcTimezoneContext(timezoneId, timezoneId);
+        ColumnVector actualPhysical =
+            GpuTimeZoneDB.convertOrcTimestampToSpark(physicalInput, context);
+        ColumnVector actualInteger =
+            GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(integerInput, context)) {
+      assertColumnsAreEqual(expectedPhysical, actualPhysical);
+      assertColumnsAreEqual(expectedInteger, actualInteger);
+    }
+  }
+
+  @Test
+  void testHistoricalDifferenceCutoffs() {
+    try (GpuTimeZoneDB.OrcTimezoneContext context =
+        GpuTimeZoneDB.buildOrcTimezoneContext("UTC", "America/New_York")) {
+      assertEquals(Instant.parse("1883-11-18T17:00:00Z").getEpochSecond()
+              * MICROS_PER_SECOND,
+          context.getReaderHistoricalDifferenceEndUtcUs());
+      assertEquals(LocalDateTime.of(1883, 11, 18, 12, 3, 58)
+              .toEpochSecond(ZoneOffset.UTC) * MICROS_PER_SECOND,
+          context.getReaderHistoricalDifferenceEndLocalUs());
+    }
+
+    try (GpuTimeZoneDB.OrcTimezoneContext context =
+        GpuTimeZoneDB.buildOrcTimezoneContext("UTC", "UTC")) {
+      assertEquals(Long.MIN_VALUE, context.getReaderHistoricalDifferenceEndUtcUs());
+      assertEquals(Long.MIN_VALUE, context.getReaderHistoricalDifferenceEndLocalUs());
     }
   }
 
