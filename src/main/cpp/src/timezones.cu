@@ -868,7 +868,7 @@ __device__ static cudf::timestamp_us convert_historical_local_to_spark(
   lists_column_device_view const& java_time_dst_rules,
   cudf::size_type java_time_tz_index)
 {
-  return spark_rapids_jni::convert_timestamp(
+  return spark_rapids_jni::convert_timestamp<cudf::timestamp_us, true>(
     local_timestamp, java_time_fixed_transitions, java_time_dst_rules, java_time_tz_index, true);
 }
 

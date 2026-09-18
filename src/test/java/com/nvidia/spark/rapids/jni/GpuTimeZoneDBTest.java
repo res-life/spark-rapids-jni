@@ -460,6 +460,38 @@ public class GpuTimeZoneDBTest {
   }
 
   @Test
+  void testConvertOrcTimestampToSparkBeforeHistoricalGapAtSubsecondPrecision() {
+    GpuTimeZoneDB.cacheDatabase();
+    String timezoneId = "America/Vancouver";
+    long orcInstant = Instant.parse("1884-01-01T08:12:28Z").getEpochSecond()
+        * MICROS_PER_SECOND - 1L;
+    long decodedMicros = orcInstant + orc2015YearBaseOffsetUs(timezoneId);
+    long expectedPhysicalMicros = convertPhysicalOrcTimestampToSparkOnCPU(
+        decodedMicros, timezoneId, timezoneId);
+    long localMicros = LocalDateTime.of(1884, 1, 1, 0, 12, 28)
+        .toEpochSecond(ZoneOffset.UTC) * MICROS_PER_SECOND - 1L;
+    long expectedIntegerMicros = convertJavaTimeLocalToUtc(localMicros, timezoneId);
+    assertEquals(-2_713_880_104_000_001L, expectedPhysicalMicros);
+    assertEquals(expectedPhysicalMicros, expectedIntegerMicros);
+
+    try (ColumnVector physicalInput = ColumnVector.timestampMicroSecondsFromLongs(decodedMicros);
+        ColumnVector expectedPhysical =
+            ColumnVector.timestampMicroSecondsFromLongs(expectedPhysicalMicros);
+        ColumnVector integerInput = ColumnVector.timestampMicroSecondsFromLongs(localMicros);
+        ColumnVector expectedInteger =
+            ColumnVector.timestampMicroSecondsFromLongs(expectedIntegerMicros);
+        GpuTimeZoneDB.OrcTimezoneContext context =
+            GpuTimeZoneDB.buildOrcTimezoneContext(timezoneId, timezoneId);
+        ColumnVector actualPhysical =
+            GpuTimeZoneDB.convertOrcTimestampToSpark(physicalInput, context);
+        ColumnVector actualInteger =
+            GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(integerInput, context)) {
+      assertColumnsAreEqual(expectedPhysical, actualPhysical);
+      assertColumnsAreEqual(expectedInteger, actualInteger);
+    }
+  }
+
+  @Test
   void testConvertIntegerOrcTimestampToSparkBeforeShanghaiFirstTransition() {
     GpuTimeZoneDB.cacheDatabase();
     String timezoneId = "Asia/Shanghai";
