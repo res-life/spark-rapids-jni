@@ -212,9 +212,7 @@ struct orc_tz_side {
  * @param writer_reader_rules_differ Whether Apache ORC would convert between the writer and reader.
  * @param stream CUDA stream.
  * @param mr Device memory resource.
- * @return Spark-compatible physical timestamps in microseconds. Integer-derived timestamps retain
- *         the existing GPU earlier-offset choice in historical local-time overlaps where Spark's
- *         ORC path preserves a later offset from the original java.util.Calendar.
+ * @return Spark-compatible timestamps in microseconds.
  */
 [[nodiscard]] std::unique_ptr<cudf::column> convert_orc_to_spark(
   cudf::column_view const& input,

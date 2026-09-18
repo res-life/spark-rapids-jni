@@ -1137,11 +1137,17 @@ CUDF_KERNEL void __launch_bounds__(CONVERT_TZ_BLOCK_SIZE)
     }
   } else {
     auto const local_timestamp = input[idx];
+    // Spark rebases the java.sql.Timestamp instant produced by ORC, not the original local value.
+    // Preserve ORC's offset choice so an ambiguous local time keeps the same overlap occurrence.
+    auto const orc_timestamp = convert_orc_from_utc_value(local_timestamp, reader);
     output[idx] =
       local_timestamp.time_since_epoch().count() < reader_historical_difference_end_local_us
-        ? convert_historical_local_to_spark(
-            local_timestamp, java_time_fixed_transitions, java_time_dst_rules, java_time_tz_index)
-        : convert_orc_from_utc_value(local_timestamp, reader);
+        ? convert_historical_orc_instant_to_spark(orc_timestamp,
+                                                  reader,
+                                                  java_time_fixed_transitions,
+                                                  java_time_dst_rules,
+                                                  java_time_tz_index)
+        : orc_timestamp;
   }
 }
 

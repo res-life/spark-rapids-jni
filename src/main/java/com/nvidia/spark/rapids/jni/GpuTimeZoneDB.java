@@ -801,14 +801,12 @@ public class GpuTimeZoneDB {
   /**
    * Convert integer-derived local timestamps produced by ORC schema evolution to Spark timestamps.
    *
-   * <p>In historical local-time overlaps this retains the existing GPU behavior: the default
-   * earlier {@link ZoneId} offset is selected. Spark's ORC path can instead retain a later offset
-   * from the original {@link TimeZone}-backed {@code Calendar}. This limitation predates the fused
-   * conversion.</p>
+   * <p>This preserves the offset selected by ORC's {@link TimeZone}-based conversion when Spark's
+   * historical rebase encounters an ambiguous local time.</p>
    *
    * @param input local TIMESTAMP_MICROSECONDS values
    * @param context timezone metadata whose reader side identifies the target timezone
-   * @return Spark-compatible timestamps in microseconds outside that overlap limitation
+   * @return Spark-compatible timestamps in microseconds
    */
   public static ColumnVector convertOrcIntegerTimestampToSpark(
       ColumnView input, OrcTimezoneContext context) {

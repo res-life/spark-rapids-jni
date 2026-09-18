@@ -145,19 +145,7 @@ public class GpuTimeZoneDBTest {
     return adjustedUs + (writerOffset - adjustedReaderOffset) * microsPerMillis;
   }
 
-  private static long convertJavaTimeLocalToUtc(long localMicros, String readerTzId) {
-    long epochSeconds = Math.floorDiv(localMicros, MICROS_PER_SECOND);
-    int nanos = Math.toIntExact(
-        Math.floorMod(localMicros, MICROS_PER_SECOND) * TimeUnit.MICROSECONDS.toNanos(1));
-    long utcSeconds = LocalDateTime.ofEpochSecond(epochSeconds, nanos, ZoneOffset.UTC)
-        .atZone(GpuTimeZoneDB.getZoneId(readerTzId))
-        .toEpochSecond();
-    return utcSeconds * MICROS_PER_SECOND + Math.floorMod(localMicros, MICROS_PER_SECOND);
-  }
-
-  private static long convertPhysicalOrcTimestampToSparkOnCPU(
-      long microseconds, String writerTzId, String readerTzId) {
-    long orcInstant = convertOrcTimezonesOnCPU(microseconds, writerTzId, readerTzId);
+  private static long rebaseOrcInstantToSparkOnCPU(long orcInstant, String readerTzId) {
     TimeZone readerTz = getTimeZoneForOrc(readerTzId);
     Calendar calendar = new Calendar.Builder()
         .setCalendarType("gregory")
@@ -191,6 +179,22 @@ public class GpuTimeZoneDBTest {
     }
     return zonedDateTime.toEpochSecond() * MICROS_PER_SECOND
         + Math.floorMod(orcInstant, MICROS_PER_SECOND);
+  }
+
+  private static long convertPhysicalOrcTimestampToSparkOnCPU(
+      long microseconds, String writerTzId, String readerTzId) {
+    long orcInstant = convertOrcTimezonesOnCPU(microseconds, writerTzId, readerTzId);
+    return rebaseOrcInstantToSparkOnCPU(orcInstant, readerTzId);
+  }
+
+  private static long convertIntegerOrcTimestampToSparkOnCPU(
+      long localMicros, String readerTzId) {
+    TimeZone readerTz = getTimeZoneForOrc(readerTzId);
+    long localMillis = Math.floorDiv(localMicros, microsPerMillis);
+    int offsetMillis = readerTz.getOffset(localMillis - readerTz.getRawOffset());
+    long orcInstant = (localMillis - offsetMillis) * microsPerMillis
+        + Math.floorMod(localMicros, microsPerMillis);
+    return rebaseOrcInstantToSparkOnCPU(orcInstant, readerTzId);
   }
 
   private static ColumnVector convertOrcFromUtcOnCPU(
@@ -470,7 +474,8 @@ public class GpuTimeZoneDBTest {
         decodedMicros, timezoneId, timezoneId);
     long localMicros = LocalDateTime.of(1884, 1, 1, 0, 12, 28)
         .toEpochSecond(ZoneOffset.UTC) * MICROS_PER_SECOND - 1L;
-    long expectedIntegerMicros = convertJavaTimeLocalToUtc(localMicros, timezoneId);
+    long expectedIntegerMicros =
+        convertIntegerOrcTimestampToSparkOnCPU(localMicros, timezoneId);
     assertEquals(-2_713_880_104_000_001L, expectedPhysicalMicros);
     assertEquals(expectedPhysicalMicros, expectedIntegerMicros);
 
@@ -496,7 +501,35 @@ public class GpuTimeZoneDBTest {
     GpuTimeZoneDB.cacheDatabase();
     String timezoneId = "Asia/Shanghai";
     long localMicros = -2_208_988_800L * MICROS_PER_SECOND;
-    long expectedMicros = convertJavaTimeLocalToUtc(localMicros, timezoneId);
+    long expectedMicros = convertIntegerOrcTimestampToSparkOnCPU(localMicros, timezoneId);
+
+    try (ColumnVector input = ColumnVector.timestampMicroSecondsFromLongs(localMicros);
+        ColumnVector expected = ColumnVector.timestampMicroSecondsFromLongs(expectedMicros);
+        GpuTimeZoneDB.OrcTimezoneContext context =
+            GpuTimeZoneDB.buildOrcTimezoneContext(timezoneId, timezoneId);
+        ColumnVector actual = GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(input, context)) {
+      assertColumnsAreEqual(expected, actual);
+    }
+  }
+
+  @Test
+  void testConvertIntegerOrcTimestampToSparkUsesOrcHistoricalOverlapOffset() {
+    GpuTimeZoneDB.cacheDatabase();
+    String timezoneId = "America/New_York";
+    long overlapStartSeconds = -2_717_668_800L;
+    long overlapEndSeconds = -2_717_668_562L;
+    long[] localMicros = {
+        (overlapStartSeconds - 1L) * MICROS_PER_SECOND,
+        overlapStartSeconds * MICROS_PER_SECOND,
+        -2_717_668_680L * MICROS_PER_SECOND,
+        (overlapEndSeconds - 1L) * MICROS_PER_SECOND,
+        overlapEndSeconds * MICROS_PER_SECOND
+    };
+    long[] expectedMicros = new long[localMicros.length];
+    for (int i = 0; i < localMicros.length; i++) {
+      expectedMicros[i] = convertIntegerOrcTimestampToSparkOnCPU(localMicros[i], timezoneId);
+    }
+    assertEquals(-2_717_650_680_000_000L, expectedMicros[2]);
 
     try (ColumnVector input = ColumnVector.timestampMicroSecondsFromLongs(localMicros);
         ColumnVector expected = ColumnVector.timestampMicroSecondsFromLongs(expectedMicros);
@@ -521,7 +554,8 @@ public class GpuTimeZoneDBTest {
         decodedMicros, timezoneId, timezoneId);
     long localMicros = Instant.parse("1870-01-01T10:00:00Z").getEpochSecond()
         * MICROS_PER_SECOND;
-    long expectedIntegerMicros = convertJavaTimeLocalToUtc(localMicros, timezoneId);
+    long expectedIntegerMicros =
+        convertIntegerOrcTimestampToSparkOnCPU(localMicros, timezoneId);
 
     try (ColumnVector physicalInput = ColumnVector.timestampMicroSecondsFromLongs(decodedMicros);
         ColumnVector expectedPhysical =
