@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -522,7 +522,7 @@ struct daylight_saving_time_utils {
  * @param to_utc true to convert to UTC, false to convert from UTC
  * @return The converted timestamp
  */
-template <typename timestamp_type>
+template <typename timestamp_type, bool floor_local_time = false>
 __device__ static timestamp_type convert_timestamp(
   timestamp_type const& timestamp,
   cudf::lists_column_device_view const& fixed_transitions,
@@ -548,12 +548,17 @@ __device__ static timestamp_type convert_timestamp(
   //     that fall inside a DST gap (a local time that does not exist) must resolve to the
   //     post-gap `offset_after`, matching Spark/Java's `LocalDateTime.atZone()` convention.
   //     Truncation toward zero happens to land on the post-gap row, so we keep it.
+  //
+  //   - floor_local_time: historical ORC rebasing has already reconstructed the exact local
+  //     wall-clock value. Preserve a negative sub-second value's pre-transition side instead of
+  //     rounding it onto the transition itself.
   constexpr int64_t sub_seconds_per_second = duration_type::period::den;
   auto const raw_count                     = timestamp.time_since_epoch().count();
-  auto const epoch_seconds  = to_utc ? static_cast<int64_t>(raw_count / sub_seconds_per_second)
-                                     : integer_utils::floor_div(raw_count, sub_seconds_per_second);
-  auto const tz_transitions = cudf::list_device_view{fixed_transitions, tz_index};
-  auto const list_size      = tz_transitions.size();
+  auto const epoch_seconds                 = !to_utc || floor_local_time
+                                               ? integer_utils::floor_div(raw_count, sub_seconds_per_second)
+                                               : static_cast<int64_t>(raw_count / sub_seconds_per_second);
+  auto const tz_transitions                = cudf::list_device_view{fixed_transitions, tz_index};
+  auto const list_size                     = tz_transitions.size();
 
   auto const transition_times = cudf::device_span<int64_t const>(
     (to_utc ? tz_instants : utc_instants).data<int64_t>() + tz_transitions.element_offset(0),
