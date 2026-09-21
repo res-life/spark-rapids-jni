@@ -408,6 +408,8 @@ public class GpuTimeZoneDBTest {
           () -> GpuTimeZoneDB.convertOrcTimestampToSpark(input, closed));
       assertThrows(IllegalStateException.class,
           () -> GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(input, closed));
+      assertThrows(IllegalStateException.class,
+          () -> GpuTimeZoneDB.rebaseOrcInstantToSpark(input, closed));
     }
 
     try (ColumnVector input = ColumnVector.timestampSecondsFromLongs(0L);
@@ -421,6 +423,8 @@ public class GpuTimeZoneDBTest {
           () -> GpuTimeZoneDB.convertOrcTimestampToSpark(input, context));
       assertThrows(CudfException.class,
           () -> GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(input, context));
+      assertThrows(CudfException.class,
+          () -> GpuTimeZoneDB.rebaseOrcInstantToSpark(input, context));
     }
   }
 
@@ -501,8 +505,12 @@ public class GpuTimeZoneDBTest {
         .toEpochSecond(ZoneOffset.UTC) * MICROS_PER_SECOND - 1L;
     long expectedIntegerMicros =
         convertIntegerOrcTimestampToSparkOnCPU(localMicros, timezoneId);
+    // DOUBLE schema evolution rounds the ORC-converted instant before Spark rebases it.
+    long roundedOrcInstant = Math.floorDiv(orcInstant, microsPerMillis) * microsPerMillis;
+    long expectedRoundedMicros = rebaseOrcInstantToSparkOnCPU(roundedOrcInstant, timezoneId);
     assertEquals(-2_713_880_104_000_001L, expectedPhysicalMicros);
     assertEquals(expectedPhysicalMicros, expectedIntegerMicros);
+    assertEquals(-2_713_880_104_001_000L, expectedRoundedMicros);
 
     try (ColumnVector physicalInput = ColumnVector.timestampMicroSecondsFromLongs(decodedMicros);
         ColumnVector expectedPhysical =
@@ -510,14 +518,19 @@ public class GpuTimeZoneDBTest {
         ColumnVector integerInput = ColumnVector.timestampMicroSecondsFromLongs(localMicros);
         ColumnVector expectedInteger =
             ColumnVector.timestampMicroSecondsFromLongs(expectedIntegerMicros);
+        ColumnVector roundedInput = ColumnVector.timestampMicroSecondsFromLongs(roundedOrcInstant);
+        ColumnVector expectedRounded =
+            ColumnVector.timestampMicroSecondsFromLongs(expectedRoundedMicros);
         GpuTimeZoneDB.OrcTimezoneContext context =
             GpuTimeZoneDB.buildOrcTimezoneContext(timezoneId, timezoneId);
         ColumnVector actualPhysical =
             GpuTimeZoneDB.convertOrcTimestampToSpark(physicalInput, context);
         ColumnVector actualInteger =
-            GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(integerInput, context)) {
+            GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(integerInput, context);
+        ColumnVector actualRounded = GpuTimeZoneDB.rebaseOrcInstantToSpark(roundedInput, context)) {
       assertColumnsAreEqual(expectedPhysical, actualPhysical);
       assertColumnsAreEqual(expectedInteger, actualInteger);
+      assertColumnsAreEqual(expectedRounded, actualRounded);
     }
   }
 
