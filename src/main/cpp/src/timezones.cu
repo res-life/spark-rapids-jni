@@ -1173,8 +1173,10 @@ std::unique_ptr<column> convert_orc_to_spark_typed(
                                              mr);
   if (input.size() == 0) { return results; }
 
-  auto const java_time_fixed_cdv = column_device_view::create(java_time_info.column(0), stream, mr);
-  auto const java_time_dst_cdv   = column_device_view::create(java_time_info.column(1), stream, mr);
+  auto const java_time_fixed_cdv = column_device_view::create(
+    java_time_info.column(0), stream, cudf::get_current_device_resource_ref());
+  auto const java_time_dst_cdv = column_device_view::create(
+    java_time_info.column(1), stream, cudf::get_current_device_resource_ref());
   auto const java_time_fixed_transitions = lists_column_device_view{*java_time_fixed_cdv};
   auto const java_time_dst_rules         = lists_column_device_view{*java_time_dst_cdv};
 
