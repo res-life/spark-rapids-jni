@@ -1347,19 +1347,15 @@ std::unique_ptr<cudf::column> convert_orc_from_utc(cudf::column_view const& inpu
   }
 }
 
-std::unique_ptr<cudf::column> convert_orc_to_spark(
-  cudf::column_view const& input,
-  int64_t writer_2015_year_base_offset_us,
-  orc_tz_side writer,
-  orc_tz_side reader,
-  cudf::table_view const* java_time_info,
-  cudf::size_type java_time_tz_index,
-  int64_t reader_historical_difference_end_utc_us,
-  int64_t reader_historical_difference_end_local_us,
-  orc_timestamp_kind input_kind,
-  bool writer_reader_rules_differ,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+std::unique_ptr<cudf::column> convert_orc_to_spark(cudf::column_view const& input,
+                                                   int64_t writer_2015_year_base_offset_us,
+                                                   orc_tz_side writer,
+                                                   orc_tz_side reader,
+                                                   cudf::table_view const* java_time_info,
+                                                   cudf::size_type java_time_tz_index,
+                                                   orc_to_spark_options options,
+                                                   cuda::stream_ref stream,
+                                                   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(input.type().id() == cudf::type_id::TIMESTAMP_MICROSECONDS,
                "ORC-to-Spark input must be TIMESTAMP_MICROSECONDS");
@@ -1368,8 +1364,8 @@ std::unique_ptr<cudf::column> convert_orc_to_spark(
 
   auto dispatch = [&]<orc_timestamp_kind kind>() {
     auto const historical_difference_end_us = kind == orc_timestamp_kind::LOCAL
-                                                ? reader_historical_difference_end_local_us
-                                                : reader_historical_difference_end_utc_us;
+                                                ? options.reader_historical_difference_end_local_us
+                                                : options.reader_historical_difference_end_utc_us;
     if (historical_difference_end_us == std::numeric_limits<int64_t>::min()) {
       if constexpr (kind == orc_timestamp_kind::PHYSICAL) {
         return convert_timezones(input,
@@ -1378,7 +1374,7 @@ std::unique_ptr<cudf::column> convert_orc_to_spark(
                                  reader,
                                  stream,
                                  mr,
-                                 writer_reader_rules_differ);
+                                 options.writer_reader_rules_differ);
       } else if constexpr (kind == orc_timestamp_kind::LOCAL) {
         return convert_orc_from_utc_typed<cudf::timestamp_us>(input, reader, stream, mr);
       } else {
@@ -1393,13 +1389,13 @@ std::unique_ptr<cudf::column> convert_orc_to_spark(
                                             reader,
                                             *java_time_info,
                                             java_time_tz_index,
-                                            reader_historical_difference_end_utc_us,
-                                            reader_historical_difference_end_local_us,
-                                            writer_reader_rules_differ,
+                                            options.reader_historical_difference_end_utc_us,
+                                            options.reader_historical_difference_end_local_us,
+                                            options.writer_reader_rules_differ,
                                             stream,
                                             mr);
   };
-  switch (input_kind) {
+  switch (options.input_kind) {
     case orc_timestamp_kind::PHYSICAL:
       return dispatch.template operator()<orc_timestamp_kind::PHYSICAL>();
     case orc_timestamp_kind::LOCAL:
