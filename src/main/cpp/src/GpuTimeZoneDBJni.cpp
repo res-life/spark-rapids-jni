@@ -202,7 +202,7 @@ JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_GpuTimeZoneDB_convertOr
   JNIEnv* env,
   jclass,
   jlong input_handle,
-  jboolean input_is_orc_timestamp,
+  jint input_kind,
   jlong writer_tz_offset_at_orc_2015_base_us,
   jlong writer_tz_info_table,
   jint writer_tz_initial_offset,
@@ -245,7 +245,7 @@ JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_GpuTimeZoneDB_convertOr
       static_cast<cudf::size_type>(java_time_tz_index),
       static_cast<int64_t>(reader_historical_difference_end_utc_us),
       static_cast<int64_t>(reader_historical_difference_end_local_us),
-      input_is_orc_timestamp,
+      static_cast<spark_rapids_jni::orc_timestamp_kind>(input_kind),
       writer_reader_rules_differ,
       cudf::get_default_stream(),
       cudf::get_current_device_resource_ref()));

@@ -766,7 +766,9 @@ public class GpuTimeZoneDB {
 
   /**
    * Apply Apache ORC's {@code SerializationUtils.convertFromUtc} semantics using a pre-built
-   * ORC timezone context. The input must be TIMESTAMP_MICROSECONDS.
+   * ORC timezone context. The input must be TIMESTAMP_MILLISECONDS or TIMESTAMP_MICROSECONDS.
+   * Millisecond input supports floating-point schema evolution without overflowing a preliminary
+   * conversion to microseconds.
    *
    * @param input values to convert
    * @param context timezone metadata whose reader side identifies the target timezone
@@ -795,7 +797,7 @@ public class GpuTimeZoneDB {
    */
   public static ColumnVector convertOrcTimestampToSpark(
       ColumnView input, OrcTimezoneContext context) {
-    return convertOrcToSpark(input, context, true);
+    return convertOrcToSpark(input, context, ORC_PHYSICAL_TIMESTAMP);
   }
 
   /**
@@ -810,15 +812,36 @@ public class GpuTimeZoneDB {
    */
   public static ColumnVector convertOrcIntegerTimestampToSpark(
       ColumnView input, OrcTimezoneContext context) {
-    return convertOrcToSpark(input, context, false);
+    return convertOrcToSpark(input, context, ORC_LOCAL_TIMESTAMP);
   }
 
+  /**
+   * Apply Spark's historical rebase to an instant already converted by Apache ORC.
+   *
+   * <p>Floating-point schema evolution must apply the legacy timezone offset before rounding to
+   * milliseconds, then rebase that rounded instant. Rounding can cross a historical transition,
+   * so this operation cannot be combined with the earlier offset lookup.</p>
+   *
+   * @param input already converted and rounded TIMESTAMP_MICROSECONDS values
+   * @param context timezone metadata whose reader side identifies the target timezone
+   * @return Spark-compatible timestamps in microseconds
+   */
+  public static ColumnVector rebaseOrcInstantToSpark(
+      ColumnView input, OrcTimezoneContext context) {
+    return convertOrcToSpark(input, context, ORC_INSTANT);
+  }
+
+  // Keep these values synchronized with orc_timestamp_kind in timezones.hpp.
+  private static final int ORC_PHYSICAL_TIMESTAMP = 0;
+  private static final int ORC_LOCAL_TIMESTAMP = 1;
+  private static final int ORC_INSTANT = 2;
+
   private static ColumnVector convertOrcToSpark(
-      ColumnView input, OrcTimezoneContext context, boolean inputIsOrcTimestamp) {
+      ColumnView input, OrcTimezoneContext context, int inputKind) {
     context.ensureJavaTimeInfo();
     return new ColumnVector(convertOrcToSparkWithRules(
         input.getNativeView(),
-        inputIsOrcTimestamp,
+        inputKind,
         context.writerTzOffsetAtOrc2015BaseUs,
         context.writerTzInfoTable != null ? context.writerTzInfoTable.getNativeView() : 0L,
         context.writerInitialOffset,
@@ -839,7 +862,7 @@ public class GpuTimeZoneDB {
   /**
    * Apply Apache ORC's {@code SerializationUtils.convertFromUtc} semantics.
    *
-   * @param input TIMESTAMP_MICROSECONDS values
+   * @param input TIMESTAMP_MILLISECONDS or TIMESTAMP_MICROSECONDS values
    * @param readerTimezone target timezone
    * @return converted values with the same type as {@code input}
    */
@@ -930,7 +953,7 @@ public class GpuTimeZoneDB {
 
   private static native long convertOrcToSparkWithRules(
       long input,
-      boolean inputIsOrcTimestamp,
+      int inputKind,
       long writerTzOffsetAtOrc2015BaseUs,
       long writerTzInfoTable,
       int writerTzInitialOffset,

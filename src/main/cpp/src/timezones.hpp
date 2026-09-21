@@ -145,6 +145,9 @@ struct orc_tz_side {
   dst_rule dst{};
 };
 
+// Keep these values synchronized with the input kinds in GpuTimeZoneDB.java.
+enum class orc_timestamp_kind { PHYSICAL = 0, LOCAL = 1, INSTANT = 2 };
+
 /**
  * @brief Convert between ORC writer timezone and reader timezone.
  *
@@ -177,12 +180,12 @@ struct orc_tz_side {
 /**
  * @brief Apply Apache ORC SerializationUtils.convertFromUtc semantics.
  *
- * @param input TIMESTAMP_MICROSECONDS input column.
+ * @param input TIMESTAMP_MILLISECONDS or TIMESTAMP_MICROSECONDS input column.
  * @param reader reader timezone transition data, offsets, and DST rule.
  * @param stream CUDA stream.
  * @param mr Device memory resource.
  * @return converted column with the same type as input.
- * @throws cudf::logic_error If input is not TIMESTAMP_MICROSECONDS.
+ * @throws cudf::logic_error If input is not TIMESTAMP_MILLISECONDS or TIMESTAMP_MICROSECONDS.
  */
 [[nodiscard]] std::unique_ptr<cudf::column> convert_orc_from_utc(
   cudf::column_view const& input,
@@ -207,8 +210,8 @@ struct orc_tz_side {
  *        rule differences, or INT64_MIN when no historical rebase is needed.
  * @param reader_historical_difference_end_local_us Exclusive local timestamp upper bound for
  *        historical rule differences, or INT64_MIN when no historical rebase is needed.
- * @param input_is_orc_timestamp True for physical ORC timestamps; false for integer-derived local
- *        timestamps produced by ORC schema evolution.
+ * @param input_kind Physical ORC timestamp, integer-derived local timestamp, or an already
+ *        converted ORC instant (after floating-point schema evolution and millisecond rounding).
  * @param writer_reader_rules_differ Whether Apache ORC would convert between the writer and reader.
  * @param stream CUDA stream.
  * @param mr Device memory resource.
@@ -223,7 +226,7 @@ struct orc_tz_side {
   cudf::size_type java_time_tz_index,
   int64_t reader_historical_difference_end_utc_us,
   int64_t reader_historical_difference_end_local_us,
-  bool input_is_orc_timestamp,
+  orc_timestamp_kind input_kind,
   bool writer_reader_rules_differ,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
