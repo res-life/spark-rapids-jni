@@ -392,6 +392,86 @@ public class GpuTimeZoneDBTest {
   }
 
   @Test
+  void testConvertOrcFromUtcMillisecondsWithNullableSliceAndExtremeValues() {
+    Long[] values = {123L, null, Long.MIN_VALUE, Long.MIN_VALUE + 1,
+        -2_713_909_652_001L, -2_713_909_652_000L, -1L, 0L, 1L,
+        1_600_000_000_000L, 7_258_118_400_000L, Long.MAX_VALUE - 1, Long.MAX_VALUE, 456L};
+    for (String zone : new String[]{"UTC", "America/Vancouver", "America/New_York",
+        "Asia/Shanghai", "Pacific/Port_Moresby"}) {
+      TimeZone tz = getTimeZoneForOrc(zone);
+      Long[] expected = new Long[values.length - 2];
+      for (int i = 0; i < expected.length; i++) {
+        Long value = values[i + 1];
+        if (value != null) {
+          // Java long arithmetic wraps at both the lookup and the offset subtraction.
+          expected[i] = value - tz.getOffset(value - tz.getRawOffset());
+        }
+      }
+      try (ColumnVector full = ColumnVector.timestampMilliSecondsFromBoxedLongs(values);
+          CloseableArray<ColumnView> slices =
+              CloseableArray.wrap(full.splitAsViews(1, values.length - 1));
+          ColumnVector reference = ColumnVector.timestampMilliSecondsFromBoxedLongs(expected);
+          GpuTimeZoneDB.OrcTimezoneContext context =
+              GpuTimeZoneDB.buildOrcTimezoneContext(zone, zone);
+          ColumnVector actual = GpuTimeZoneDB.convertOrcFromUtc(slices.get(1), context)) {
+        assertColumnsAreEqual(reference, actual);
+      }
+    }
+  }
+
+  @Test
+  void testRebaseRoundedOrcInstantWithNullableSlice() {
+    GpuTimeZoneDB.cacheDatabase();
+    // Include both sides of Vancouver's 1884 gap, the New York and Port Moresby overlaps,
+    // and modern timestamps. These are already ORC-converted instants: no writer base or
+    // negative-nanosecond borrow must be applied a second time.
+    Long[] values = {123L, null, -2_713_880_852_002_000L, -2_713_880_852_001_000L,
+        -2_713_880_852_000_000L, -2_713_880_851_999_000L,
+        -2_717_650_900_000_000L, -2_840_176_800_000_000L,
+        -1L, 0L, 1L, 1_600_000_000_123_000L, 7_258_118_400_123_000L, null, 456L};
+    for (String zone : new String[]{"UTC", "America/Vancouver", "America/New_York",
+        "Asia/Shanghai", "Pacific/Port_Moresby"}) {
+      Long[] expected = new Long[values.length - 2];
+      for (int i = 0; i < expected.length; i++) {
+        if (values[i + 1] != null) {
+          expected[i] = rebaseOrcInstantToSparkOnCPU(values[i + 1], zone);
+        }
+      }
+      try (ColumnVector full = ColumnVector.timestampMicroSecondsFromBoxedLongs(values);
+          CloseableArray<ColumnView> slices =
+              CloseableArray.wrap(full.splitAsViews(1, values.length - 1));
+          ColumnVector reference = ColumnVector.timestampMicroSecondsFromBoxedLongs(expected);
+          GpuTimeZoneDB.OrcTimezoneContext context =
+              GpuTimeZoneDB.buildOrcTimezoneContext(zone, zone);
+          ColumnVector actual = GpuTimeZoneDB.rebaseOrcInstantToSpark(slices.get(1), context)) {
+        assertColumnsAreEqual(reference, actual);
+      }
+    }
+  }
+
+  @Test
+  void testOrcToSparkEmptyAndAllNullInputs() {
+    GpuTimeZoneDB.cacheDatabase();
+    for (String zone : new String[]{"UTC", "America/New_York", "Pacific/Port_Moresby"}) {
+      for (Long[] values : new Long[][]{new Long[0], new Long[257]}) {
+        try (ColumnVector input = ColumnVector.timestampMicroSecondsFromBoxedLongs(values);
+            ColumnVector millis = ColumnVector.timestampMilliSecondsFromBoxedLongs(values);
+            GpuTimeZoneDB.OrcTimezoneContext context =
+                GpuTimeZoneDB.buildOrcTimezoneContext("UTC", zone);
+            ColumnVector physical = GpuTimeZoneDB.convertOrcTimestampToSpark(input, context);
+            ColumnVector local = GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(input, context);
+            ColumnVector instant = GpuTimeZoneDB.rebaseOrcInstantToSpark(input, context);
+            ColumnVector convertedMillis = GpuTimeZoneDB.convertOrcFromUtc(millis, context)) {
+          assertColumnsAreEqual(input, physical);
+          assertColumnsAreEqual(input, local);
+          assertColumnsAreEqual(input, instant);
+          assertColumnsAreEqual(millis, convertedMillis);
+        }
+      }
+    }
+  }
+
+  @Test
   void testOrcTimezoneContextConversionFailures() {
     GpuTimeZoneDB.cacheDatabase();
     GpuTimeZoneDB.verifyDatabaseCached();
