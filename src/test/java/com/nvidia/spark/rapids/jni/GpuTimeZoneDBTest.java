@@ -528,6 +528,51 @@ public class GpuTimeZoneDBTest {
   }
 
   @Test
+  void testConvertPhysicalOrcTimestampToSparkWithDifferentTimezones() {
+    GpuTimeZoneDB.cacheDatabase();
+    String[][] timezonePairs = {
+        {"America/Los_Angeles", "America/New_York"},
+        {"America/New_York", "America/Los_Angeles"},
+        {"UTC", "America/New_York"},
+        {"America/New_York", "Pacific/Port_Moresby"}
+    };
+    String[] instants = {
+        "1870-01-01T00:00:00.123456Z",
+        "1883-11-18T17:00:00Z",
+        "1883-11-18T17:00:00.999999Z",
+        "1969-12-31T23:59:59.999999Z",
+        "2020-03-08T06:59:59.999999Z",
+        "2020-03-08T07:00:00Z",
+        "2020-11-01T05:30:00.123456Z",
+        "2020-11-01T06:30:00.123456Z"
+    };
+    for (String[] pair : timezonePairs) {
+      String writerTimezone = pair[0];
+      String readerTimezone = pair[1];
+      assertFalse(getTimeZoneForOrc(writerTimezone)
+          .hasSameRules(getTimeZoneForOrc(readerTimezone)));
+      Long[] decodedMicros = new Long[instants.length + 1];
+      Long[] expectedMicros = new Long[decodedMicros.length];
+      long baseOffsetUs = orc2015YearBaseOffsetUs(writerTimezone);
+      for (int i = 0; i < instants.length; i++) {
+        Instant instant = Instant.parse(instants[i]);
+        decodedMicros[i] = instant.getEpochSecond() * MICROS_PER_SECOND
+            + instant.getNano() / 1_000L + baseOffsetUs;
+        expectedMicros[i] = convertPhysicalOrcTimestampToSparkOnCPU(
+            decodedMicros[i], writerTimezone, readerTimezone);
+      }
+
+      try (ColumnVector input = ColumnVector.timestampMicroSecondsFromBoxedLongs(decodedMicros);
+          ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(expectedMicros);
+          GpuTimeZoneDB.OrcTimezoneContext context =
+              GpuTimeZoneDB.buildOrcTimezoneContext(writerTimezone, readerTimezone);
+          ColumnVector actual = GpuTimeZoneDB.convertOrcTimestampToSpark(input, context)) {
+        assertColumnsAreEqual(expected, actual);
+      }
+    }
+  }
+
+  @Test
   void testConvertPhysicalOrcTimestampToSparkWithNullableSlice() {
     GpuTimeZoneDB.cacheDatabase();
     String timezoneId = "America/New_York";
