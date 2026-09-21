@@ -444,6 +444,31 @@ public class GpuTimeZoneDBTest {
   }
 
   @Test
+  void testConvertPhysicalOrcTimestampToSparkWithNullableSlice() {
+    GpuTimeZoneDB.cacheDatabase();
+    String timezoneId = "America/New_York";
+    long baseOffsetUs = orc2015YearBaseOffsetUs(timezoneId);
+    long historicalMicros = -2_717_655_100_076_025L + baseOffsetUs;
+    long modernMicros = Instant.parse("2020-01-01T00:00:00Z").getEpochSecond()
+        * MICROS_PER_SECOND + 123_456L + baseOffsetUs;
+
+    // Keep a native view with a nonzero offset; subVector copies the slice into a new column.
+    try (ColumnVector full = ColumnVector.timestampMicroSecondsFromBoxedLongs(
+            123L, null, historicalMicros, null, modernMicros, 456L);
+        CloseableArray<ColumnView> slices = CloseableArray.wrap(full.splitAsViews(1, 5));
+        ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(
+            null, convertPhysicalOrcTimestampToSparkOnCPU(
+                historicalMicros, timezoneId, timezoneId),
+            null, convertPhysicalOrcTimestampToSparkOnCPU(
+                modernMicros, timezoneId, timezoneId));
+        GpuTimeZoneDB.OrcTimezoneContext context =
+            GpuTimeZoneDB.buildOrcTimezoneContext(timezoneId, timezoneId);
+        ColumnVector actual = GpuTimeZoneDB.convertOrcTimestampToSpark(slices.get(1), context)) {
+      assertColumnsAreEqual(expected, actual);
+    }
+  }
+
+  @Test
   void testConvertPhysicalOrcTimestampToSparkUsesLaterHistoricalOverlap() {
     GpuTimeZoneDB.cacheDatabase();
     String timezoneId = "Africa/Johannesburg";
@@ -536,6 +561,29 @@ public class GpuTimeZoneDBTest {
         GpuTimeZoneDB.OrcTimezoneContext context =
             GpuTimeZoneDB.buildOrcTimezoneContext(timezoneId, timezoneId);
         ColumnVector actual = GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(input, context)) {
+      assertColumnsAreEqual(expected, actual);
+    }
+  }
+
+  @Test
+  void testConvertIntegerOrcTimestampToSparkWithNullableSlice() {
+    GpuTimeZoneDB.cacheDatabase();
+    String timezoneId = "America/New_York";
+    long historicalMicros = -2_717_668_680L * MICROS_PER_SECOND;
+    long modernMicros = LocalDateTime.of(2020, 1, 1, 0, 0)
+        .toEpochSecond(ZoneOffset.UTC) * MICROS_PER_SECOND + 123_456L;
+
+    // Offset one also shifts the null mask relative to the original column's validity bits.
+    try (ColumnVector full = ColumnVector.timestampMicroSecondsFromBoxedLongs(
+            123L, null, historicalMicros, null, modernMicros, 456L);
+        CloseableArray<ColumnView> slices = CloseableArray.wrap(full.splitAsViews(1, 5));
+        ColumnVector expected = ColumnVector.timestampMicroSecondsFromBoxedLongs(
+            null, convertIntegerOrcTimestampToSparkOnCPU(historicalMicros, timezoneId),
+            null, convertIntegerOrcTimestampToSparkOnCPU(modernMicros, timezoneId));
+        GpuTimeZoneDB.OrcTimezoneContext context =
+            GpuTimeZoneDB.buildOrcTimezoneContext(timezoneId, timezoneId);
+        ColumnVector actual =
+            GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(slices.get(1), context)) {
       assertColumnsAreEqual(expected, actual);
     }
   }
