@@ -544,14 +544,16 @@ __device__ static timestamp_type convert_timestamp(
   //     transition itself and the binary search returns the post-transition offset (1-hour
   //     off-by-one, see #14861). Floor-divide gives the correct pre-transition offset.
   //
-  //   - to_utc (to_utc == true): the input is a local wall clock. Sub-second negative inputs
-  //     that fall inside a DST gap (a local time that does not exist) must resolve to the
-  //     post-gap `offset_after`, matching Spark/Java's `LocalDateTime.atZone()` convention.
-  //     Truncation toward zero happens to land on the post-gap row, so we keep it.
+  //   - to_utc (to_utc == true): the input is a local wall clock. The generic path retains
+  //     truncation toward zero for compatibility. At a negative sub-second gap boundary this
+  //     can select the post-gap row too early, a known mismatch with Java's LocalDateTime.atZone().
+  //     Java shifts nonexistent local times forward by the gap, equivalent to subtracting the
+  //     pre-gap offset from the original local timestamp.
   //
-  //   - floor_local_time: historical ORC rebasing has already reconstructed the exact local
-  //     wall-clock value. Preserve a negative sub-second value's pre-transition side instead of
-  //     rounding it onto the transition itself.
+  //   - floor_local_time: enable floor division for historical ORC rebasing so negative
+  //     sub-second values retain their pre-transition side. This flag scopes the correction
+  //     to ORC; Java's gap resolution is the same for identical local timestamps from any source.
+  //     The generic to_utc truncation mismatch remains outside this change.
   constexpr int64_t sub_seconds_per_second = duration_type::period::den;
   auto const raw_count                     = timestamp.time_since_epoch().count();
   auto const epoch_seconds                 = !to_utc || floor_local_time
