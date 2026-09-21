@@ -534,7 +534,12 @@ public class GpuTimeZoneDBTest {
         {"America/Los_Angeles", "America/New_York"},
         {"America/New_York", "America/Los_Angeles"},
         {"UTC", "America/New_York"},
-        {"America/New_York", "Pacific/Port_Moresby"}
+        {"America/New_York", "Pacific/Port_Moresby"},
+        // Gaza's large transition table exercises global-memory and mixed staging paths.
+        {"Asia/Gaza", "America/New_York"},
+        {"America/New_York", "Asia/Gaza"},
+        {"UTC", "Asia/Gaza"},
+        {"Asia/Gaza", "Pacific/Port_Moresby"}
     };
     String[] instants = {
         "1870-01-01T00:00:00.123456Z",
