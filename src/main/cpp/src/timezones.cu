@@ -1099,7 +1099,8 @@ CUDF_KERNEL void __launch_bounds__(CONVERT_TZ_BLOCK_SIZE)
                            rt_end,
                            ro_begin);
   }
-  __syncthreads();
+  // Staging advances ptr only when it writes shared memory. This condition is block-uniform.
+  if (ptr != smem) { __syncthreads(); }
 
   auto const idx = static_cast<cudf::size_type>(blockIdx.x * blockDim.x + threadIdx.x);
   if (idx >= num_rows) { return; }
