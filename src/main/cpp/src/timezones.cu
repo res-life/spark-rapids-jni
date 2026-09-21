@@ -497,6 +497,20 @@ struct orc_tz_side_kernel_args {
   bool is_fixed;
 };
 
+[[nodiscard]] orc_tz_side_kernel_args make_orc_tz_side_kernel_args(
+  spark_rapids_jni::orc_tz_side const& side)
+{
+  auto const* table = side.tz_info_table;
+  auto const count  = table ? table->column(0).size() : 0;
+  return {.trans          = table ? table->column(0).begin<int64_t>() : nullptr,
+          .offsets        = table ? table->column(1).begin<int32_t>() : nullptr,
+          .trans_count    = count,
+          .initial_offset = side.initial_offset,
+          .raw_offset     = side.raw_offset,
+          .dst            = side.dst,
+          .is_fixed       = count == 0 && !side.dst.has_dst};
+}
+
 __device__ static int32_t get_transition_index(int64_t time_ms, tz_side_info const& side)
 {
   if (side.trans_begin == side.trans_end) {
@@ -751,49 +765,24 @@ std::unique_ptr<column> convert_timezones(cudf::column_view const& input,
 
   if (input.size() == 0) { return results; }
 
-  int64_t const* writer_trans_ptr =
-    writer.tz_info_table ? writer.tz_info_table->column(0).begin<int64_t>() : nullptr;
-  int32_t const* writer_offsets_ptr =
-    writer.tz_info_table ? writer.tz_info_table->column(1).begin<int32_t>() : nullptr;
-  int32_t writer_trans_count = writer.tz_info_table ? writer.tz_info_table->column(0).size() : 0;
-
-  int64_t const* reader_trans_ptr =
-    reader.tz_info_table ? reader.tz_info_table->column(0).begin<int64_t>() : nullptr;
-  int32_t const* reader_offsets_ptr =
-    reader.tz_info_table ? reader.tz_info_table->column(1).begin<int32_t>() : nullptr;
-  int32_t reader_trans_count = reader.tz_info_table ? reader.tz_info_table->column(0).size() : 0;
+  auto const writer_args = make_orc_tz_side_kernel_args(writer);
+  auto const reader_args = make_orc_tz_side_kernel_args(reader);
 
   size_t smem_bytes = 0;
   if (writer_reader_rules_differ) {
-    if (writer_trans_count > 0 && writer_trans_count <= MAX_SMEM_TRANSITIONS) {
-      smem_bytes += writer_trans_count * (sizeof(int64_t) + sizeof(int32_t));
+    if (writer_args.trans_count > 0 && writer_args.trans_count <= MAX_SMEM_TRANSITIONS) {
+      smem_bytes += writer_args.trans_count * (sizeof(int64_t) + sizeof(int32_t));
     }
-    if (reader_trans_count > 0 && reader_trans_count <= MAX_SMEM_TRANSITIONS) {
+    if (reader_args.trans_count > 0 && reader_args.trans_count <= MAX_SMEM_TRANSITIONS) {
       // Alignment padding between writer offsets (int32_t) and reader transitions (int64_t)
       smem_bytes = align_up(smem_bytes, alignof(int64_t));
-      smem_bytes += reader_trans_count * (sizeof(int64_t) + sizeof(int32_t));
+      smem_bytes += reader_args.trans_count * (sizeof(int64_t) + sizeof(int32_t));
     }
   }
 
   int32_t num_blocks = cudf::util::div_rounding_up_safe(input.size(), CONVERT_TZ_BLOCK_SIZE);
   auto const writer_2015_year_base_offset =
     make_orc_base_offset_info(writer_2015_year_base_offset_us);
-  auto const is_writer_fixed = writer_trans_count == 0 && !writer.dst.has_dst;
-  auto const is_reader_fixed = reader_trans_count == 0 && !reader.dst.has_dst;
-  auto const writer_args     = orc_tz_side_kernel_args{writer_trans_ptr,
-                                                   writer_offsets_ptr,
-                                                   writer_trans_count,
-                                                   writer.initial_offset,
-                                                   writer.raw_offset,
-                                                   writer.dst,
-                                                   is_writer_fixed};
-  auto const reader_args     = orc_tz_side_kernel_args{reader_trans_ptr,
-                                                   reader_offsets_ptr,
-                                                   reader_trans_count,
-                                                   reader.initial_offset,
-                                                   reader.raw_offset,
-                                                   reader.dst,
-                                                   is_reader_fixed};
 
   auto const launch_config = cuda::make_config(cuda::grid_dims(num_blocks),
                                                cuda::block_dims<CONVERT_TZ_BLOCK_SIZE>(),
@@ -1011,24 +1000,12 @@ std::unique_ptr<column> convert_orc_from_utc_typed(cudf::column_view const& inpu
                                                mr);
   if (input.size() == 0) { return results; }
 
-  int64_t const* reader_trans_ptr =
-    reader.tz_info_table ? reader.tz_info_table->column(0).begin<int64_t>() : nullptr;
-  int32_t const* reader_offsets_ptr =
-    reader.tz_info_table ? reader.tz_info_table->column(1).begin<int32_t>() : nullptr;
-  int32_t reader_trans_count = reader.tz_info_table ? reader.tz_info_table->column(0).size() : 0;
-  auto const is_reader_fixed = reader_trans_count == 0 && !reader.dst.has_dst;
-  size_t smem_bytes          = 0;
-  if (reader_trans_count > 0 && reader_trans_count <= MAX_SMEM_TRANSITIONS) {
-    smem_bytes = reader_trans_count * (sizeof(int64_t) + sizeof(int32_t));
+  auto const reader_args = make_orc_tz_side_kernel_args(reader);
+  size_t smem_bytes      = 0;
+  if (reader_args.trans_count > 0 && reader_args.trans_count <= MAX_SMEM_TRANSITIONS) {
+    smem_bytes = reader_args.trans_count * (sizeof(int64_t) + sizeof(int32_t));
   }
 
-  auto const reader_args   = orc_tz_side_kernel_args{reader_trans_ptr,
-                                                   reader_offsets_ptr,
-                                                   reader_trans_count,
-                                                   reader.initial_offset,
-                                                   reader.raw_offset,
-                                                   reader.dst,
-                                                   is_reader_fixed};
   int32_t num_blocks       = cudf::util::div_rounding_up_safe(input.size(), CONVERT_TZ_BLOCK_SIZE);
   auto const launch_config = cuda::make_config(cuda::grid_dims(num_blocks),
                                                cuda::block_dims<CONVERT_TZ_BLOCK_SIZE>(),
@@ -1181,44 +1158,20 @@ std::unique_ptr<column> convert_orc_to_spark_typed(
   auto const java_time_fixed_transitions = lists_column_device_view{*java_time_fixed_cdv};
   auto const java_time_dst_rules         = lists_column_device_view{*java_time_dst_cdv};
 
-  int64_t const* writer_trans_ptr =
-    writer.tz_info_table ? writer.tz_info_table->column(0).begin<int64_t>() : nullptr;
-  int32_t const* writer_offsets_ptr =
-    writer.tz_info_table ? writer.tz_info_table->column(1).begin<int32_t>() : nullptr;
-  auto const writer_trans_count = writer.tz_info_table ? writer.tz_info_table->column(0).size() : 0;
-  int64_t const* reader_trans_ptr =
-    reader.tz_info_table ? reader.tz_info_table->column(0).begin<int64_t>() : nullptr;
-  int32_t const* reader_offsets_ptr =
-    reader.tz_info_table ? reader.tz_info_table->column(1).begin<int32_t>() : nullptr;
-  auto const reader_trans_count = reader.tz_info_table ? reader.tz_info_table->column(0).size() : 0;
-
-  auto const is_writer_fixed = writer_trans_count == 0 && !writer.dst.has_dst;
-  auto const is_reader_fixed = reader_trans_count == 0 && !reader.dst.has_dst;
-  auto const writer_args     = orc_tz_side_kernel_args{writer_trans_ptr,
-                                                   writer_offsets_ptr,
-                                                   writer_trans_count,
-                                                   writer.initial_offset,
-                                                   writer.raw_offset,
-                                                   writer.dst,
-                                                   is_writer_fixed};
-  auto const reader_args     = orc_tz_side_kernel_args{reader_trans_ptr,
-                                                   reader_offsets_ptr,
-                                                   reader_trans_count,
-                                                   reader.initial_offset,
-                                                   reader.raw_offset,
-                                                   reader.dst,
-                                                   is_reader_fixed};
+  auto const writer_args = make_orc_tz_side_kernel_args(writer);
+  auto const reader_args = make_orc_tz_side_kernel_args(reader);
 
   size_t smem_bytes = 0;
   if constexpr (input_kind == orc_timestamp_kind::PHYSICAL) {
-    if (writer_reader_rules_differ && writer_trans_count > 0 &&
-        writer_trans_count <= MAX_SMEM_TRANSITIONS) {
-      smem_bytes += writer_trans_count * (sizeof(int64_t) + sizeof(int32_t));
+    if (writer_reader_rules_differ && writer_args.trans_count > 0 &&
+        writer_args.trans_count <= MAX_SMEM_TRANSITIONS) {
+      smem_bytes += writer_args.trans_count * (sizeof(int64_t) + sizeof(int32_t));
     }
   }
-  if (!is_reader_fixed && reader_trans_count > 0 && reader_trans_count <= MAX_SMEM_TRANSITIONS) {
+  if (!reader_args.is_fixed && reader_args.trans_count > 0 &&
+      reader_args.trans_count <= MAX_SMEM_TRANSITIONS) {
     smem_bytes = align_up(smem_bytes, alignof(int64_t));
-    smem_bytes += reader_trans_count * (sizeof(int64_t) + sizeof(int32_t));
+    smem_bytes += reader_args.trans_count * (sizeof(int64_t) + sizeof(int32_t));
   }
 
   auto const num_blocks    = cudf::util::div_rounding_up_safe(input.size(), CONVERT_TZ_BLOCK_SIZE);
