@@ -236,6 +236,13 @@ JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_GpuTimeZoneDB_convertOr
       writer_tz_info_tab, writer_tz_initial_offset, writer_tz_raw_offset, writer_dst};
     auto const reader = spark_rapids_jni::orc_tz_side{
       reader_tz_info_tab, reader_tz_initial_offset, reader_tz_raw_offset, reader_dst};
+    auto const options = spark_rapids_jni::orc_to_spark_options{
+      .reader_historical_difference_end_utc_us =
+        static_cast<int64_t>(reader_historical_difference_end_utc_us),
+      .reader_historical_difference_end_local_us =
+        static_cast<int64_t>(reader_historical_difference_end_local_us),
+      .input_kind                 = static_cast<spark_rapids_jni::orc_timestamp_kind>(input_kind),
+      .writer_reader_rules_differ = static_cast<bool>(writer_reader_rules_differ)};
     return cudf::jni::release_as_jlong(spark_rapids_jni::convert_orc_to_spark(
       *input,
       static_cast<int64_t>(writer_tz_offset_at_orc_2015_base_us),
@@ -243,10 +250,7 @@ JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_GpuTimeZoneDB_convertOr
       reader,
       java_time_info_tab,
       static_cast<cudf::size_type>(java_time_tz_index),
-      static_cast<int64_t>(reader_historical_difference_end_utc_us),
-      static_cast<int64_t>(reader_historical_difference_end_local_us),
-      static_cast<spark_rapids_jni::orc_timestamp_kind>(input_kind),
-      writer_reader_rules_differ,
+      options,
       cudf::get_default_stream(),
       cudf::get_current_device_resource_ref()));
   }

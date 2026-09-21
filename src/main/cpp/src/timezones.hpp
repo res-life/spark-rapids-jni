@@ -148,6 +148,15 @@ struct orc_tz_side {
 // Keep these values synchronized with the input kinds in GpuTimeZoneDB.java.
 enum class orc_timestamp_kind { PHYSICAL = 0, LOCAL = 1, INSTANT = 2 };
 
+/** @brief Policy options for converting ORC timestamps to Spark timestamps. */
+struct orc_to_spark_options {
+  // Exclusive historical rule-difference bounds, or INT64_MIN when no rebase is needed.
+  int64_t reader_historical_difference_end_utc_us;
+  int64_t reader_historical_difference_end_local_us;
+  orc_timestamp_kind input_kind;
+  bool writer_reader_rules_differ;
+};
+
 /**
  * @brief Convert between ORC writer timezone and reader timezone.
  *
@@ -206,13 +215,8 @@ enum class orc_timestamp_kind { PHYSICAL = 0, LOCAL = 1, INSTANT = 2 };
  * @param reader Reader timezone transition data, offsets, and DST rule.
  * @param java_time_info java.time transition table, or nullptr when no historical rebase is needed.
  * @param java_time_tz_index Reader timezone row in java_time_info.
- * @param reader_historical_difference_end_utc_us Exclusive UTC instant upper bound for historical
- *        rule differences, or INT64_MIN when no historical rebase is needed.
- * @param reader_historical_difference_end_local_us Exclusive local timestamp upper bound for
- *        historical rule differences, or INT64_MIN when no historical rebase is needed.
- * @param input_kind Physical ORC timestamp, integer-derived local timestamp, or an already
- *        converted ORC instant (after floating-point schema evolution and millisecond rounding).
- * @param writer_reader_rules_differ Whether Apache ORC would convert between the writer and reader.
+ * @param options Historical rule-difference bounds, input kind, and writer/reader conversion
+ * policy.
  * @param stream CUDA stream.
  * @param mr Device memory resource.
  * @return Spark-compatible timestamps in microseconds.
@@ -224,10 +228,7 @@ enum class orc_timestamp_kind { PHYSICAL = 0, LOCAL = 1, INSTANT = 2 };
   orc_tz_side reader,
   cudf::table_view const* java_time_info,
   cudf::size_type java_time_tz_index,
-  int64_t reader_historical_difference_end_utc_us,
-  int64_t reader_historical_difference_end_local_us,
-  orc_timestamp_kind input_kind,
-  bool writer_reader_rules_differ,
+  orc_to_spark_options options,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
