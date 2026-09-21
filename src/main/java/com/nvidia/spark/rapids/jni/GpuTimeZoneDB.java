@@ -20,6 +20,7 @@ import ai.rapids.cudf.ColumnVector;
 import ai.rapids.cudf.ColumnView;
 import ai.rapids.cudf.DType;
 import ai.rapids.cudf.HostColumnVector;
+import ai.rapids.cudf.HostColumnVectorCore;
 import ai.rapids.cudf.Table;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -378,18 +379,21 @@ public class GpuTimeZoneDB {
         zoneIdToTable.put(nonNormalizedTz, zoneIdToTable.get(normalizedTz));
       } // end of for
 
-      HostColumnVector.DataType childType = new HostColumnVector.StructType(false,
-          new HostColumnVector.BasicType(false, DType.INT64),
-          new HostColumnVector.BasicType(false, DType.INT64),
-          new HostColumnVector.BasicType(false, DType.INT32));
-      HostColumnVector.DataType transitionType = new HostColumnVector.ListType(false, childType);
-      fixedTransitions = HostColumnVector.fromLists(transitionType,
+      fixedTransitions = HostColumnVector.fromLists(getFixedTransitionDataType(),
           masterTransitions.toArray(new List[0]));
       dstRules = HostColumnVector.fromLists(getDstDataType(), masterDsts.toArray(new List[0]));
       tzNameToIndexMap = getTzNameToIndexMap(sortedTimeZones, zoneIdToTable);
     } catch (Exception e) {
       throw new IllegalStateException("load timezone DB cache failed!", e);
     }
+  }
+
+  private static HostColumnVector.DataType getFixedTransitionDataType() {
+    return new HostColumnVector.ListType(false,
+        new HostColumnVector.StructType(false,
+            new HostColumnVector.BasicType(false, DType.INT64),
+            new HostColumnVector.BasicType(false, DType.INT64),
+            new HostColumnVector.BasicType(false, DType.INT32)));
   }
 
   private static HostColumnVector.DataType getDstDataType() {
@@ -411,6 +415,36 @@ public class GpuTimeZoneDB {
     try (ColumnVector fixedInfo = fixedTransitions.copyToDevice();
         ColumnVector dstInfo = dstRules.copyToDevice()) {
       return new Table(fixedInfo, dstInfo);
+    }
+  }
+
+  private static Table getTimezoneInfo(int tzIndex) {
+    try (HostColumnVector.ColumnBuilder fixedRow =
+            new HostColumnVector.ColumnBuilder(getFixedTransitionDataType(), 1);
+        HostColumnVector.ColumnBuilder dstRow =
+            new HostColumnVector.ColumnBuilder(getDstDataType(), 1)) {
+      HostColumnVectorCore transitions = fixedTransitions.getChildColumnView(0);
+      HostColumnVector.ColumnBuilder transition = fixedRow.getChild(0);
+      long transitionEnd = fixedTransitions.getEndListOffset(tzIndex);
+      for (long i = fixedTransitions.getStartListOffset(tzIndex); i < transitionEnd; i++) {
+        transition.getChild(0).append(transitions.getChildColumnView(0).getLong(i));
+        transition.getChild(1).append(transitions.getChildColumnView(1).getLong(i));
+        transition.getChild(2).append(transitions.getChildColumnView(2).getInt(i));
+        transition.endStruct();
+      }
+      fixedRow.endList();
+
+      HostColumnVectorCore rules = dstRules.getChildColumnView(0);
+      long ruleEnd = dstRules.getEndListOffset(tzIndex);
+      for (long i = dstRules.getStartListOffset(tzIndex); i < ruleEnd; i++) {
+        dstRow.getChild(0).append(rules.getInt(i));
+      }
+      dstRow.endList();
+
+      try (ColumnVector fixedInfo = fixedRow.buildAndPutOnDevice();
+          ColumnVector dstInfo = dstRow.buildAndPutOnDevice()) {
+        return new Table(fixedInfo, dstInfo);
+      }
     }
   }
 
@@ -682,16 +716,16 @@ public class GpuTimeZoneDB {
         return;
       }
 
-      Table javaTimeInfo = getTimezoneInfo();
+      verifyDatabaseCached();
       Integer tzIndex = zoneIdToTable.get(readerJavaTimeZoneId);
       if (tzIndex == null) {
-        javaTimeInfo.close();
         throw new IllegalStateException(
             "java.time timezone is not present in the GPU timezone database: "
                 + readerJavaTimeZoneId);
       }
-      readerJavaTimeTzInfoTable = javaTimeInfo;
-      readerJavaTimeTzIndex = tzIndex;
+      // Copy only the reader row, rather than retaining the full database for each context.
+      readerJavaTimeTzInfoTable = getTimezoneInfo(tzIndex);
+      readerJavaTimeTzIndex = 0;
     }
 
     @Override
