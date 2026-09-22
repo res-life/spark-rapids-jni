@@ -639,6 +639,13 @@ __device__ static cudf::timestamp_us convert_timestamp_between_timezones(
 constexpr int32_t MAX_SMEM_TRANSITIONS  = 512;
 constexpr int32_t CONVERT_TZ_BLOCK_SIZE = 256;
 
+[[nodiscard]] size_t add_staged_transition_smem_bytes(size_t smem_bytes, int32_t trans_count)
+{
+  if (trans_count <= 0 || trans_count > MAX_SMEM_TRANSITIONS) { return smem_bytes; }
+  return align_up(smem_bytes, alignof(int64_t)) +
+         static_cast<size_t>(trans_count) * (sizeof(int64_t) + sizeof(int32_t));
+}
+
 void validate_timezone_table(cudf::table_view const* table)
 {
   if (table == nullptr) { return; }
@@ -770,14 +777,8 @@ std::unique_ptr<column> convert_timezones(cudf::column_view const& input,
 
   size_t smem_bytes = 0;
   if (writer_reader_rules_differ) {
-    if (writer_args.trans_count > 0 && writer_args.trans_count <= MAX_SMEM_TRANSITIONS) {
-      smem_bytes += writer_args.trans_count * (sizeof(int64_t) + sizeof(int32_t));
-    }
-    if (reader_args.trans_count > 0 && reader_args.trans_count <= MAX_SMEM_TRANSITIONS) {
-      // Alignment padding between writer offsets (int32_t) and reader transitions (int64_t)
-      smem_bytes = align_up(smem_bytes, alignof(int64_t));
-      smem_bytes += reader_args.trans_count * (sizeof(int64_t) + sizeof(int32_t));
-    }
+    smem_bytes = add_staged_transition_smem_bytes(smem_bytes, writer_args.trans_count);
+    smem_bytes = add_staged_transition_smem_bytes(smem_bytes, reader_args.trans_count);
   }
 
   int32_t num_blocks = cudf::util::div_rounding_up_safe(input.size(), CONVERT_TZ_BLOCK_SIZE);
@@ -1001,10 +1002,7 @@ std::unique_ptr<column> convert_orc_from_utc_typed(cudf::column_view const& inpu
   if (input.size() == 0) { return results; }
 
   auto const reader_args = make_orc_tz_side_kernel_args(reader);
-  size_t smem_bytes      = 0;
-  if (reader_args.trans_count > 0 && reader_args.trans_count <= MAX_SMEM_TRANSITIONS) {
-    smem_bytes = reader_args.trans_count * (sizeof(int64_t) + sizeof(int32_t));
-  }
+  auto const smem_bytes  = add_staged_transition_smem_bytes(size_t{0}, reader_args.trans_count);
 
   int32_t num_blocks       = cudf::util::div_rounding_up_safe(input.size(), CONVERT_TZ_BLOCK_SIZE);
   auto const launch_config = cuda::make_config(cuda::grid_dims(num_blocks),
@@ -1163,15 +1161,12 @@ std::unique_ptr<column> convert_orc_to_spark_typed(
 
   size_t smem_bytes = 0;
   if constexpr (input_kind == orc_timestamp_kind::PHYSICAL) {
-    if (writer_reader_rules_differ && writer_args.trans_count > 0 &&
-        writer_args.trans_count <= MAX_SMEM_TRANSITIONS) {
-      smem_bytes += writer_args.trans_count * (sizeof(int64_t) + sizeof(int32_t));
+    if (writer_reader_rules_differ) {
+      smem_bytes = add_staged_transition_smem_bytes(smem_bytes, writer_args.trans_count);
     }
   }
-  if (!reader_args.is_fixed && reader_args.trans_count > 0 &&
-      reader_args.trans_count <= MAX_SMEM_TRANSITIONS) {
-    smem_bytes = align_up(smem_bytes, alignof(int64_t));
-    smem_bytes += reader_args.trans_count * (sizeof(int64_t) + sizeof(int32_t));
+  if (!reader_args.is_fixed) {
+    smem_bytes = add_staged_transition_smem_bytes(smem_bytes, reader_args.trans_count);
   }
 
   auto const num_blocks    = cudf::util::div_rounding_up_safe(input.size(), CONVERT_TZ_BLOCK_SIZE);
