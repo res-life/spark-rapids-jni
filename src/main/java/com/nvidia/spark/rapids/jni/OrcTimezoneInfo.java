@@ -197,18 +197,8 @@ class OrcTimezoneInfo {
       TimeZone tz,
       ZoneRules rules,
       HistoricalTransitions historicalTransitions) {
-    TreeSet<Long> transitionMillis = new TreeSet<>();
-    if (historicalTransitions.transitions != null) {
-      for (long transition : historicalTransitions.transitions) {
-        transitionMillis.add(transition);
-      }
-    }
-    for (ZoneOffsetTransition transition : rules.getTransitions()) {
-      long transitionMs = transition.getInstant().toEpochMilli();
-      if (transitionMs >= MIN_SUPPORTED_ORC_UTC_MILLIS) {
-        transitionMillis.add(transitionMs);
-      }
-    }
+    TreeSet<Long> transitionMillis =
+        collectHistoricalTransitionMillis(rules, historicalTransitions);
     if (transitionMillis.isEmpty()) {
       return HistoricalRuleDifferenceCutoffs.NONE;
     }
@@ -248,6 +238,23 @@ class OrcTimezoneInfo {
         getOffsetMillis(rules, differenceEndUtcMillis)));
     return new HistoricalRuleDifferenceCutoffs(
         differenceEndUtcMillis, differenceEndUtcMillis + maxOffsetMillis);
+  }
+
+  private static TreeSet<Long> collectHistoricalTransitionMillis(
+      ZoneRules rules, HistoricalTransitions historicalTransitions) {
+    TreeSet<Long> transitionMillis = new TreeSet<>();
+    if (historicalTransitions.transitions != null) {
+      for (long transition : historicalTransitions.transitions) {
+        transitionMillis.add(transition);
+      }
+    }
+    for (ZoneOffsetTransition transition : rules.getTransitions()) {
+      long transitionMs = transition.getInstant().toEpochMilli();
+      if (transitionMs >= MIN_SUPPORTED_ORC_UTC_MILLIS) {
+        transitionMillis.add(transitionMs);
+      }
+    }
+    return transitionMillis;
   }
 
   private static int getOffsetMillis(ZoneRules rules, long epochMillis) {
