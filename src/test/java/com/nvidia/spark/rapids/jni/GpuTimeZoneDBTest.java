@@ -626,21 +626,42 @@ public class GpuTimeZoneDBTest {
   void testConvertOrcTimestampToSparkBeforeHistoricalGapAtSubsecondPrecision() {
     GpuTimeZoneDB.cacheDatabase();
     String timezoneId = "America/Vancouver";
-    long orcInstant = Instant.parse("1884-01-01T08:12:28Z").getEpochSecond()
-        * MICROS_PER_SECOND - 1L;
+    ZoneId zoneId = GpuTimeZoneDB.getZoneId(timezoneId);
+    TimeZone legacyTimeZone = getTimeZoneForOrc(timezoneId);
+    ZoneOffsetTransition historicalGap = null;
+    // JDK distributions can bundle different tzdb versions, so derive the boundary from the
+    // active rules instead of pinning Vancouver's historical transition instant.
+    for (ZoneOffsetTransition transition : zoneId.getRules().getTransitions()) {
+      if (transition.isGap()) {
+        historicalGap = transition;
+        break;
+      }
+    }
+    if (historicalGap == null) {
+      throw new AssertionError("Expected a historical Vancouver gap");
+    }
+
+    long transitionInstantUs =
+        historicalGap.getInstant().getEpochSecond() * MICROS_PER_SECOND;
+    long gapUs = historicalGap.getDuration().getSeconds() * MICROS_PER_SECOND;
+    long localMicros = historicalGap.getDateTimeAfter()
+        .toEpochSecond(ZoneOffset.UTC) * MICROS_PER_SECOND - 1L;
+    long localMillis = Math.floorDiv(localMicros, microsPerMillis);
+    int legacyOffsetMillis = legacyTimeZone.getOffset(
+        localMillis - legacyTimeZone.getRawOffset());
+    long orcInstant = (localMillis - legacyOffsetMillis) * microsPerMillis
+        + Math.floorMod(localMicros, microsPerMillis);
     long decodedMicros = orcInstant + orc2015YearBaseOffsetUs(timezoneId);
     long expectedPhysicalMicros = convertPhysicalOrcTimestampToSparkOnCPU(
         decodedMicros, timezoneId, timezoneId);
-    long localMicros = LocalDateTime.of(1884, 1, 1, 0, 12, 28)
-        .toEpochSecond(ZoneOffset.UTC) * MICROS_PER_SECOND - 1L;
     long expectedIntegerMicros =
         convertIntegerOrcTimestampToSparkOnCPU(localMicros, timezoneId);
     // DOUBLE schema evolution rounds the ORC-converted instant before Spark rebases it.
     long roundedOrcInstant = Math.floorDiv(orcInstant, microsPerMillis) * microsPerMillis;
     long expectedRoundedMicros = rebaseOrcInstantToSparkOnCPU(roundedOrcInstant, timezoneId);
-    assertEquals(-2_713_880_104_000_001L, expectedPhysicalMicros);
+    assertEquals(transitionInstantUs + gapUs - 1L, expectedPhysicalMicros);
     assertEquals(expectedPhysicalMicros, expectedIntegerMicros);
-    assertEquals(-2_713_880_104_001_000L, expectedRoundedMicros);
+    assertEquals(transitionInstantUs + gapUs - microsPerMillis, expectedRoundedMicros);
 
     try (ColumnVector physicalInput = ColumnVector.timestampMicroSecondsFromLongs(decodedMicros);
         ColumnVector expectedPhysical =
