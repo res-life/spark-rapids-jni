@@ -1149,7 +1149,7 @@ std::unique_ptr<column> convert_orc_to_spark_typed(
                                              input.null_count(),
                                              stream,
                                              mr);
-  if (input.size() == 0) { return results; }
+  if (input.size() == 0 || input.null_count() == input.size()) { return results; }
 
   auto const java_time_fixed_cdv = column_device_view::create(
     java_time_info.column(0), stream, cudf::get_current_device_resource_ref());
