@@ -472,6 +472,36 @@ public class GpuTimeZoneDBTest {
   }
 
   @Test
+  void testOrcToSparkFixedOffsetInputs() {
+    GpuTimeZoneDB.cacheDatabase();
+    String timezoneId = "+05:30";
+    long[] values = {-1_234_567L, 0L, 1_234_567L};
+    long[] expectedPhysicalValues = new long[values.length];
+    long[] expectedLocalValues = new long[values.length];
+    for (int i = 0; i < values.length; i++) {
+      expectedPhysicalValues[i] =
+          convertPhysicalOrcTimestampToSparkOnCPU(values[i], timezoneId, timezoneId);
+      expectedLocalValues[i] = convertIntegerOrcTimestampToSparkOnCPU(values[i], timezoneId);
+    }
+
+    try (ColumnVector input = ColumnVector.timestampMicroSecondsFromLongs(values);
+        ColumnVector expectedPhysical =
+            ColumnVector.timestampMicroSecondsFromLongs(expectedPhysicalValues);
+        ColumnVector expectedLocal =
+            ColumnVector.timestampMicroSecondsFromLongs(expectedLocalValues);
+        GpuTimeZoneDB.OrcTimezoneContext context =
+            GpuTimeZoneDB.buildOrcTimezoneContext(timezoneId, timezoneId);
+        ColumnVector actualPhysical = GpuTimeZoneDB.convertOrcTimestampToSpark(input, context);
+        ColumnVector actualLocal =
+            GpuTimeZoneDB.convertOrcIntegerTimestampToSpark(input, context)) {
+      assertEquals(Long.MIN_VALUE, context.getReaderHistoricalDifferenceEndUtcUs());
+      assertEquals(Long.MIN_VALUE, context.getReaderHistoricalDifferenceEndLocalUs());
+      assertColumnsAreEqual(expectedPhysical, actualPhysical);
+      assertColumnsAreEqual(expectedLocal, actualLocal);
+    }
+  }
+
+  @Test
   void testOrcTimezoneContextConversionFailures() {
     GpuTimeZoneDB.cacheDatabase();
     GpuTimeZoneDB.verifyDatabaseCached();
