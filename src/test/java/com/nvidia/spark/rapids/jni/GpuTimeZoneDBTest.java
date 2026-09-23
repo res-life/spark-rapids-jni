@@ -26,8 +26,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.Month;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoField;
@@ -258,6 +261,24 @@ public class GpuTimeZoneDBTest {
       values.add(localTransitionUs + 1);
     }
     return values.toArray(new Long[0]);
+  }
+
+  @Test
+  void testMidnightEndOfDayTransitionRule() {
+    ZoneOffset standardOffset = ZoneOffset.ofHours(2);
+    ZoneOffsetTransitionRule rule = ZoneOffsetTransitionRule.of(
+        Month.MARCH,
+        -1,
+        DayOfWeek.THURSDAY,
+        LocalTime.MIDNIGHT,
+        true,
+        ZoneOffsetTransitionRule.TimeDefinition.WALL,
+        standardOffset,
+        standardOffset,
+        ZoneOffset.ofHours(3));
+
+    assertEquals(24 * 3_600,
+        GpuTimeZoneDB.getTransitionRuleTimeDiffComparedToMidnight(rule));
   }
 
   @Test
