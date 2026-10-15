@@ -23,6 +23,7 @@
 #include <cudf/strings/string_view.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/transform.hpp>
+#include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/wrappers/timestamps.hpp>
@@ -37,6 +38,7 @@
 #include <thrust/for_each.h>
 #include <thrust/iterator/counting_iterator.h>
 
+#include <cstdint>
 #include <memory>
 #include <utility>
 
@@ -176,10 +178,10 @@ struct parse_strings_fn {
 };
 
 template <typename Parser>
-std::unique_ptr<cudf::column> parse_dates(cudf::strings_column_view const& input,
-                                          Parser parser,
-                                          cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+[[nodiscard]] std::unique_ptr<cudf::column> parse_dates(cudf::strings_column_view const& input,
+                                                        Parser parser,
+                                                        cuda::stream_ref stream,
+                                                        rmm::device_async_resource_ref mr)
 {
   auto const dtype = cudf::data_type{cudf::type_id::TIMESTAMP_DAYS};
   auto const size  = input.size();

@@ -259,11 +259,19 @@ struct csv_date_parse_options {
 /**
  * @brief Parse CORRECTED CSV dates using the default grammar or strict Spark format tokens.
  *
- * Unlike expression parsing, this preserves whitespace, consumes the entire input, accepts
- * signed/extended yyyy years, and returns days directly without a microsecond intermediate.
- * Missing date fields default to 1970/1/1. Invalid calendar dates, times and day overflows
- * produce nulls. After formatter failure, optional fallback removes GMT and retries the shared
- * CAST grammar. This grammar also supplies DefaultDateFormatter when format is absent.
+ * With an explicit format, the first attempt requires exact field widths, preserves whitespace
+ * and consumes the entire input. It accepts signed/extended yyyy years and validates parsed
+ * time fields.
+ *
+ * When format is absent, the first attempt uses the shared CAST grammar. If the first attempt
+ * fails, optional fallback removes all original GMT occurrences and retries that grammar. CAST
+ * trims whitespace according to options.trim_control_characters, accepts partial dates, and
+ * ignores a suffix starting with a space or T after a complete date without validating its time
+ * fields.
+ *
+ * Results are returned as days directly without a microsecond intermediate. Missing date fields
+ * default to 1970/1/1. Null inputs and values rejected by all enabled attempts, including invalid
+ * calendar dates or epoch-day overflows, produce nulls.
  *
  * @param input Input strings.
  * @param format Optional numeric Spark pattern using yyyy, MM, dd, HH, mm and ss.
@@ -272,7 +280,7 @@ struct csv_date_parse_options {
  * @param mr Memory resource for the returned column.
  * @return A timestamp_D column, with nulls for invalid inputs.
  */
-std::unique_ptr<cudf::column> parse_csv_date_strings(
+[[nodiscard]] std::unique_ptr<cudf::column> parse_csv_date_strings(
   cudf::strings_column_view const& input,
   std::optional<std::string> const& format,
   csv_date_parse_options options,
