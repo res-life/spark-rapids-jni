@@ -1338,6 +1338,16 @@ public class CastStringsTest {
   }
 
   @Test
+  void parseCsvDateRepeatedFields() {
+    try (ColumnVector input = ColumnVector.fromStrings(
+            "2020-05-01-05", "2020-05-01-06", null);
+        ColumnVector actual = CastStrings.parseCsvDate(input, "yyyy-MM-dd-MM", false, true);
+        ColumnVector expected = ColumnVector.timestampDaysFromBoxedInts(18383, null, null)) {
+      AssertUtils.assertColumnsAreEqual(expected, actual);
+    }
+  }
+
+  @Test
   void parseCsvDateJniOptions() {
     try (ColumnVector input = ColumnVector.fromStrings(
             "2020-05-01", "20GMT20-05-01", "\u007f2020-05-01\u007f", null);

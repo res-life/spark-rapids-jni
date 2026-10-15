@@ -261,19 +261,35 @@ __device__ bool read_csv_year(date_parse::cursor<>& input, format_token token, i
   return true;
 }
 
-__device__ bool store_field(parsed_dt& d, uint8_t field, int v)
+template <bool CheckConflicts>
+__device__ bool store_field_value(int& target, int value, uint8_t mask, uint8_t& seen_fields)
+{
+  if constexpr (CheckConflicts) {
+    if ((seen_fields & mask) != 0 && target != value) { return false; }
+    seen_fields |= mask;
+  }
+  target = value;
+  return true;
+}
+
+template <bool CheckConflicts>
+__device__ bool store_field(parsed_dt& d, uint8_t field, int v, uint8_t& seen_fields)
 {
   switch (field) {
-    case FLD_YEAR: d.year = v; return true;
-    case FLD_MONTH: d.month = v; return true;
-    case FLD_DAY: d.day = v; return true;
-    case FLD_HOUR: d.hour = v; return true;
-    case FLD_MINUTE: d.minute = v; return true;
-    case FLD_SECOND: d.second = v; return true;
+    case FLD_YEAR: return store_field_value<CheckConflicts>(d.year, v, 1 << FLD_YEAR, seen_fields);
+    case FLD_MONTH:
+      return store_field_value<CheckConflicts>(d.month, v, 1 << FLD_MONTH, seen_fields);
+    case FLD_DAY: return store_field_value<CheckConflicts>(d.day, v, 1 << FLD_DAY, seen_fields);
+    case FLD_HOUR: return store_field_value<CheckConflicts>(d.hour, v, 1 << FLD_HOUR, seen_fields);
+    case FLD_MINUTE:
+      return store_field_value<CheckConflicts>(d.minute, v, 1 << FLD_MINUTE, seen_fields);
+    case FLD_SECOND:
+      return store_field_value<CheckConflicts>(d.second, v, 1 << FLD_SECOND, seen_fields);
     default: return false;
   }
 }
 
+template <bool CheckConflicts = false>
 __device__ bool walk_tokens(unsigned char const* p,
                             int pos,
                             int end,
@@ -282,15 +298,22 @@ __device__ bool walk_tokens(unsigned char const* p,
                             parsed_dt& d)
 {
   date_parse::cursor<> input{p, pos, end};
+  // CSV rejects conflicting repetitions; expression specializations keep last-value semantics.
+  uint8_t seen_fields = 0;
   for (int i = 0; i < num_tokens; ++i) {
     auto const& t = tokens[i];
     bool ok       = true;
     switch (t.kind) {
-      case TOK_CSV_YEAR: ok = read_csv_year(input, t, d.year); break;
+      case TOK_CSV_YEAR: {
+        int year = 0;
+        ok       = read_csv_year(input, t, year) &&
+             store_field<CheckConflicts>(d, FLD_YEAR, year, seen_fields);
+        break;
+      }
       case TOK_DIGITS: {
         int v = 0;
         ok    = input.read_digits(t.c, v) >= t.b;
-        if (ok) { ok = store_field(d, t.a, v); }
+        if (ok) { ok = store_field<CheckConflicts>(d, t.a, v, seen_fields); }
         break;
       }
       case TOK_LITERAL: ok = input.consume(t.a); break;
@@ -391,7 +414,7 @@ struct csv_date_parser {
       }
     } else {
       parsed_dt d{};
-      if (walk_tokens(p, 0, size, tokens.data(), static_cast<int>(tokens.size()), d) &&
+      if (walk_tokens<true>(p, 0, size, tokens.data(), static_cast<int>(tokens.size()), d) &&
           date_time_utils::is_valid_time(d.hour, d.minute, d.second, 0) &&
           date_parse::to_days(d.year, d.month, d.day, result)) {
         return true;
