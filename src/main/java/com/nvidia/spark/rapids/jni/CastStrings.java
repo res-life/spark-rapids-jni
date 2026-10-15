@@ -417,17 +417,44 @@ public class CastStrings {
 
   /**
    * Parse CORRECTED CSV dates with an optional numeric Spark pattern using yyyy, MM, dd, HH,
-   * mm and ss. An absent pattern uses Spark's CAST-style DefaultDateFormatter grammar.
-   * Fields have exact widths; yyyy supports signed and extended years using
-   * {@code DateTimeFormatter}'s {@code EXCEEDS_PAD} sign rules. Missing date fields default to
-   * 1970/1/1. Input is not trimmed and must be consumed completely. Invalid dates, times and
-   * epoch-day overflow produce nulls. Optional CSV fallback removes GMT after a formatter
-   * failure and retries the shared CAST parser in the same device pass.
+   * mm and ss. With an explicit pattern, the first attempt requires exact field widths and
+   * complete input consumption without trimming whitespace. The yyyy field supports signed
+   * and extended years using {@code DateTimeFormatter}'s {@code EXCEEDS_PAD} sign rules.
+   * Missing date fields default to 1970/1/1.
+   *
+   * <p>If {@code format} is null, the first attempt uses Spark's CAST-style
+   * {@code DefaultDateFormatter} grammar. It trims surrounding whitespace and accepts partial
+   * dates such as {@code 2020} and {@code 2020-05}. For example, {@code 2020} directly produces
+   * {@code 2020-01-01}; that success does not require a fallback retry.
+   *
+   * <p>If the first attempt fails and {@code enableFallback} is true, remove all original
+   * {@code GMT} occurrences, as {@code DateTimeUtils.cleanLegacyTimestampStr} does, and retry
+   * with the shared CAST-style {@code stringToDate} grammar. For example, an explicit
+   * {@code yyyy/MM/dd} pattern rejects {@code 2020-05-01}, but the retry accepts it. This is
+   * Spark's backward-compatible parsing retry: it does not switch execution to CPU, change
+   * {@code timeParserPolicy} to {@code LEGACY}, or invoke the LEGACY date formatter. Both
+   * attempts run on the GPU in the same device pass.
+   *
+   * <p>The caller resolves {@code enableFallback} from Spark's version and CSV options.
+   * Spark 3.3 always enables the retry. Under CORRECTED in Spark 3.4+, the read option
+   * {@code enableDateTimeParsingFallback} takes precedence over
+   * {@code spark.sql.legacy.csv.enableDateTimeParsingFallback}; if neither is set, enable it
+   * when the CSV {@code dateFormat} option is absent and disable it when that option is present.
+   *
+   * <p>Input nulls, dates outside the epoch-day range, and values rejected by all applicable
+   * parsing attempts produce null elements. This API does not implement CSV record-handling
+   * modes. Spark's {@code PERMISSIVE} mode retains a malformed record with null for the invalid
+   * date field, {@code DROPMALFORMED} drops the record, and {@code FAILFAST} throws a parsing
+   * exception. Parsing retry enablement is independent of these modes: even {@code FAILFAST}
+   * does not fail if a configured retry succeeds. The caller must enforce the required
+   * record-level behavior.
    *
    * @param input the input string column
    * @param format the CSV date format, or null for DefaultDateFormatter
-   * @param enableFallback whether to retry CAST-style parsing after formatter failure
+   * @param enableFallback caller-resolved flag for Spark's CAST-style parsing retry after the
+   *                       first attempt fails; this does not control CPU execution fallback
    * @param trimControlCharacters whether UTF8String.trimAll also trims ISO control characters
+   *                              during default-format parsing and the optional retry
    * @return a TIMESTAMP_DAYS column, with nulls for invalid inputs
    */
   public static ColumnVector parseCsvDate(ColumnView input, String format,
