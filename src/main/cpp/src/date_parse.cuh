@@ -143,8 +143,8 @@ __device__ bool parse_cast(cursor<CleanGMT> input,
     return to_days(date.year, date.month, date.day, result);
   }
   if (!input.consume('-') || input.read_digits(2, date.day) < 1) { return false; }
-  if (!input.remaining_is_whitespace(trim_control_characters) && input.peek() != ' ' &&
-      input.peek() != 'T') {
+  if (input.peek() != ' ' && input.peek() != 'T' &&
+      !input.remaining_is_whitespace(trim_control_characters)) {
     return false;
   }
   return to_days(date.year, date.month, date.day, result);
