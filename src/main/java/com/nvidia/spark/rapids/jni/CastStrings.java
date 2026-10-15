@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -414,6 +414,30 @@ public class CastStrings {
     return new ColumnVector(
         parseTimestampWithFormat(input.getNativeView(), format, timeParserPolicy));
   }
+
+  /**
+   * Parse CORRECTED CSV dates with an optional numeric Spark pattern using yyyy, MM, dd, HH,
+   * mm and ss. An absent pattern uses Spark's CAST-style DefaultDateFormatter grammar.
+   * Fields have exact widths; yyyy supports signed and extended years using
+   * {@code DateTimeFormatter}'s {@code EXCEEDS_PAD} sign rules. Missing date fields default to
+   * 1970/1/1. Input is not trimmed and must be consumed completely. Invalid dates, times and
+   * epoch-day overflow produce nulls. Optional CSV fallback removes GMT after a formatter
+   * failure and retries the shared CAST parser in the same device pass.
+   *
+   * @param input the input string column
+   * @param format the CSV date format, or null for DefaultDateFormatter
+   * @param enableFallback whether to retry CAST-style parsing after formatter failure
+   * @param trimControlCharacters whether UTF8String.trimAll also trims ISO control characters
+   * @return a TIMESTAMP_DAYS column, with nulls for invalid inputs
+   */
+  public static ColumnVector parseCsvDate(ColumnView input, String format,
+      boolean enableFallback, boolean trimControlCharacters) {
+    return new ColumnVector(parseCsvDate(
+        input.getNativeView(), format, enableFallback, trimControlCharacters));
+  }
+
+  private static native long parseCsvDate(long input, String format,
+      boolean enableFallback, boolean trimControlCharacters);
 
   private static native long toInteger(long nativeColumnView, boolean ansi_enabled, boolean strip,
       int dtype);
