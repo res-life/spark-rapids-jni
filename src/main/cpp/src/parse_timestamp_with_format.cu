@@ -29,6 +29,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/pinned_memory.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
@@ -39,6 +40,7 @@
 #include <cuda/atomic>
 #include <cuda/std/bit>
 #include <cuda/stream>
+#include <cuda_runtime_api.h>
 #include <thrust/for_each.h>
 #include <thrust/iterator/counting_iterator.h>
 
@@ -418,10 +420,22 @@ std::unique_ptr<cudf::column> parse_csv_date_strings(cudf::strings_column_view c
     return date_parse::parse_dates(input, csv_date_parser{{}, options}, stream, mr);
   }
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
-  auto staging = cudf::detail::make_pinned_vector_async<format_token>(host_tokens.size(), stream);
-  std::copy(host_tokens.begin(), host_tokens.end(), staging.begin());
-  auto tokens = cudf::detail::make_device_uvector_async(staging, stream, temp_mr);
+  auto const temp_mr             = cudf::get_current_device_resource_ref();
+  auto pinned_mr                 = cudf::get_pinned_memory_resource();
+  auto const token_bytes         = host_tokens.size() * sizeof(format_token);
+  auto constexpr token_alignment = alignof(format_token);
+  // Keep host staging alive until the caller stream has consumed the asynchronous copy.
+  auto release_staging =
+    [pinned_mr, token_bytes, token_alignment, stream](format_token* ptr) mutable {
+      pinned_mr.deallocate(stream, ptr, token_bytes, token_alignment);
+    };
+  auto staging = std::unique_ptr<format_token, decltype(release_staging)>{
+    static_cast<format_token*>(pinned_mr.allocate_sync(token_bytes, token_alignment)),
+    release_staging};
+  std::copy(host_tokens.begin(), host_tokens.end(), staging.get());
+  auto tokens = rmm::device_uvector<format_token>(host_tokens.size(), stream, temp_mr);
+  CUDF_CUDA_TRY(
+    cudaMemcpyAsync(tokens.data(), staging.get(), token_bytes, cudaMemcpyDefault, stream.get()));
   return date_parse::parse_dates(
     input,
     csv_date_parser{cudf::device_span<format_token const>{tokens.data(), tokens.size()}, options},
