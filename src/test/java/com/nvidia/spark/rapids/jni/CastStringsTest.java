@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1334,6 +1334,33 @@ public class CastStringsTest {
         ColumnVector actual = CastStrings.toTimestamp(
             inputCv, "Z", /* ansi */ true, SPARK_330_VERSION)) {
       Assertions.assertNull(actual);
+    }
+  }
+
+  @Test
+  void parseCsvDateJniOptions() {
+    try (ColumnVector input = ColumnVector.fromStrings(
+            "2020-05-01", "20GMT20-05-01", "\u007f2020-05-01\u007f", null);
+        ColumnVector strict = CastStrings.parseCsvDate(input, "yyyy-MM-dd", false, true);
+        ColumnVector strictExpected = ColumnVector.timestampDaysFromBoxedInts(
+            18383, null, null, null);
+        ColumnVector fallback = CastStrings.parseCsvDate(input, "yyyy/MM/dd", true, false);
+        ColumnVector fallbackExpected = ColumnVector.timestampDaysFromBoxedInts(
+            18383, 18383, null, null);
+        ColumnVector defaultFormat = CastStrings.parseCsvDate(input, null, false, true);
+        ColumnVector defaultExpected = ColumnVector.timestampDaysFromBoxedInts(
+            18383, null, 18383, null);
+        ColumnVector defaultOldTrim = CastStrings.parseCsvDate(input, null, false, false);
+        ColumnVector defaultOldTrimExpected = ColumnVector.timestampDaysFromBoxedInts(
+            18383, null, null, null);
+        ColumnVector defaultFallback = CastStrings.parseCsvDate(input, null, true, true);
+        ColumnVector defaultFallbackExpected = ColumnVector.timestampDaysFromBoxedInts(
+            18383, 18383, 18383, null)) {
+      AssertUtils.assertColumnsAreEqual(strictExpected, strict);
+      AssertUtils.assertColumnsAreEqual(fallbackExpected, fallback);
+      AssertUtils.assertColumnsAreEqual(defaultExpected, defaultFormat);
+      AssertUtils.assertColumnsAreEqual(defaultOldTrimExpected, defaultOldTrim);
+      AssertUtils.assertColumnsAreEqual(defaultFallbackExpected, defaultFallback);
     }
   }
 

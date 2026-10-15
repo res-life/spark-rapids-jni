@@ -144,6 +144,20 @@ TEST_F(ParseCsvDateWithFormatTests, SignedYearsAndEpochDayBounds)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
 }
 
+TEST_F(ParseCsvDateWithFormatTests, IntegerYearOverflowIsNull)
+{
+  auto const strings = test::strings_column_wrapper{"+2147483648-05-01",
+                                                    "-2147483648-05-01",
+                                                    "+4294969316-05-01",
+                                                    "-4294969316-05-01",
+                                                    "+0000002020-05-01"};
+  auto const result  = spark_rapids_jni::parse_csv_date_strings(
+    strings_column_view{strings}, "yyyy-MM-dd", {false, true});
+  auto const expected =
+    test::fixed_width_column_wrapper<timestamp_D>({0, 0, 0, 0, 18'383}, {0, 0, 0, 0, 1});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+}
+
 TEST_F(ParseCsvDateWithFormatTests, SliceAndEmpty)
 {
   auto const strings = test::strings_column_wrapper(
@@ -196,6 +210,17 @@ TEST_F(ParseCsvDateWithFormatTests, AllNumericFormatsUseStrictTokens)
   }
 }
 
+TEST_F(ParseCsvDateWithFormatTests, StrictSlashDateWidths)
+{
+  auto const strings = test::strings_column_wrapper{
+    "2020/05/01", "2020/5/01", "2020/05/1", "2020/005/01", "2020/05/001"};
+  auto const result = spark_rapids_jni::parse_csv_date_strings(
+    strings_column_view{strings}, "yyyy/MM/dd", {false, true});
+  auto const expected =
+    test::fixed_width_column_wrapper<timestamp_D>({18'383, 0, 0, 0, 0}, {1, 0, 0, 0, 0});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+}
+
 TEST_F(ParseCsvDateWithFormatTests, DefaultGrammarAndCsvFallback)
 {
   auto const strings  = test::strings_column_wrapper{"2020",
@@ -213,6 +238,11 @@ TEST_F(ParseCsvDateWithFormatTests, DefaultGrammarAndCsvFallback)
   auto const result = spark_rapids_jni::parse_csv_date_strings(
     strings_column_view{strings}, std::nullopt, {true, true});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+  auto const no_fallback = spark_rapids_jni::parse_csv_date_strings(
+    strings_column_view{strings}, std::nullopt, {false, true});
+  auto const no_fallback_expected = test::fixed_width_column_wrapper<timestamp_D>(
+    {18'262, 18'383, 18'383, 18'383, 0, 18'383, 0, 0}, {1, 1, 1, 1, 0, 1, 0, 0});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(no_fallback->view(), no_fallback_expected);
   auto const formatted = spark_rapids_jni::parse_csv_date_strings(
     strings_column_view{strings}, "yyyy/MM/dd", {true, true});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(formatted->view(), expected);
