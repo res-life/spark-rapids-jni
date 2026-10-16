@@ -20,6 +20,7 @@
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/strings/convert/convert_floats.hpp>
 
@@ -34,6 +35,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 using namespace cudf;
@@ -386,6 +388,234 @@ TEST_F(ParseCsvDateWithFormatTests, ExtendedYearWidths)
   auto const expected =
     test::fixed_width_column_wrapper<timestamp_D>({18383, -1457197, 18383, 0, 0}, {1, 1, 1, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+}
+
+TEST_F(ParseCsvDateWithFormatTests, TruncationAtEveryTokenBoundary)
+{
+  std::vector<std::pair<std::string, std::string>> const examples{
+    {"yyyy-MM-dd", "2020-05-01"},
+    {"yyyy/MM/dd", "2020/05/01"},
+    {"yyyy-MM", "2020-05"},
+    {"yyyy/MM", "2020/05"},
+    {"dd/MM/yyyy", "01/05/2020"},
+    {"yyyy-MM-dd HH:mm:ss", "2020-05-01 23:59:59"},
+    {"MM-dd", "05-01"},
+    {"MM/dd", "05/01"},
+    {"dd-MM", "01-05"},
+    {"dd/MM", "01/05"},
+    {"MM/yyyy", "05/2020"},
+    {"MM-yyyy", "05-2020"},
+    {"MM/dd/yyyy", "05/01/2020"},
+    {"MM-dd-yyyy", "05-01-2020"},
+    {"MMyyyy", "052020"}};
+  for (auto const& [format, valid_input] : examples) {
+    SCOPED_TRACE(format);
+    std::vector<std::string> inputs;
+    for (size_t end = 0; end < valid_input.size(); ++end) {
+      inputs.push_back(valid_input.substr(0, end));
+    }
+    inputs.push_back(valid_input + "x");
+    inputs.push_back(valid_input);
+    std::vector<int32_t> days(inputs.size(), format.size() == 5 ? 120 : 18'383);
+    std::vector<bool> validity(inputs.size(), false);
+    validity.back()    = true;
+    auto const strings = test::strings_column_wrapper(inputs.begin(), inputs.end());
+    auto const expected =
+      test::fixed_width_column_wrapper<timestamp_D>(days.begin(), days.end(), validity.begin());
+    auto const result =
+      spark_rapids_jni::parse_csv_date_strings(strings_column_view{strings}, format, {false, true});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+  }
+}
+
+TEST_F(ParseCsvDateWithFormatTests, PackedYearSignAndReservedDigits)
+{
+  auto const strings = test::strings_column_wrapper{"20200501",
+                                                    "+20200501",
+                                                    "+020200501",
+                                                    "020200501",
+                                                    "-00010501",
+                                                    "-00000501",
+                                                    "+00000000000000020200501",
+                                                    "+000000000000000020200501",
+                                                    "+21474836480501",
+                                                    "2020050",
+                                                    "202005011",
+                                                    "20201301",
+                                                    "20200230"};
+  auto const result  = spark_rapids_jni::parse_csv_date_strings(
+    strings_column_view{strings}, "yyyyMMdd", {false, true});
+  auto const expected = test::fixed_width_column_wrapper<timestamp_D>(
+    {18'383, 0, 18'383, 0, -719'773, 0, 18'383, 0, 0, 0, 0, 0, 0},
+    {1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+}
+
+TEST_F(ParseCsvDateWithFormatTests, CalendarAndTimeBoundaries)
+{
+  auto const strings  = test::strings_column_wrapper{"2000-02-29 00:00:00",
+                                                    "1900-02-29 00:00:00",
+                                                    "0000-02-29 23:59:59",
+                                                    "2020-04-30 23:59:59",
+                                                    "2020-04-31 23:59:59",
+                                                    "2020-05-01 24:00:00",
+                                                    "2020-05-01 23:60:00",
+                                                    "2020-05-01 23:59:60",
+                                                    "2020-05-01 -1:00:00",
+                                                    "2020-05-01 00:-1:00",
+                                                    "2020-05-01 00:00:-1",
+                                                    "2020-00-01 00:00:00",
+                                                    "2020-13-01 00:00:00",
+                                                    "2020-01-00 00:00:00",
+                                                    "2020-01-32 00:00:00"};
+  auto const expected = test::fixed_width_column_wrapper<timestamp_D>(
+    {11'016, 0, -719'469, 18'382, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
+  auto const result = spark_rapids_jni::parse_csv_date_strings(
+    strings_column_view{strings}, "yyyy-MM-dd HH:mm:ss", {false, true});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+}
+
+TEST_F(ParseCsvDateWithFormatTests, GmtCleaningIsCaseSensitiveAndNonRecursive)
+{
+  auto const strings  = test::strings_column_wrapper{"GMTGMT2020-05-01GMTGMT",
+                                                    "20GMT20-0GMT5-0GMT1",
+                                                    "GMT",
+                                                    "GMTGMT",
+                                                    "GM2020-05-01",
+                                                    "2020-05-01GM",
+                                                    "2020-05-01G",
+                                                    "gmt2020-05-01",
+                                                    "GGMTMT2020-05-01",
+                                                    "20GGMTMT20-05-01",
+                                                    "2020-05-01GMT x",
+                                                    "2020-05-01GMT\tx",
+                                                    "2020-05GMT",
+                                                    "2020GMT",
+                                                    "2020-02-30GMT"};
+  auto const expected = test::fixed_width_column_wrapper<timestamp_D>(
+    {18'383, 18'383, 0, 0, 0, 0, 0, 0, 0, 0, 18'383, 0, 18'383, 18'262, 0},
+    {1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0});
+  for (auto const& format :
+       {std::optional<std::string>{}, std::optional<std::string>{"yyyy/MM/dd"}}) {
+    auto const result =
+      spark_rapids_jni::parse_csv_date_strings(strings_column_view{strings}, format, {true, true});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+  }
+}
+
+TEST_F(ParseCsvDateWithFormatTests, AsciiAndUnicodeWhitespace)
+{
+  // Character.isWhitespace's ASCII members, before Spark additionally trimmed ISO controls.
+  std::vector<int> const old_whitespace{9, 10, 11, 12, 13, 28, 29, 30, 31, 32};
+  std::vector<std::string> inputs;
+  for (int byte = 0; byte < 128; ++byte) {
+    inputs.push_back(std::string(1, static_cast<char>(byte)) + "2020-05-01" +
+                     std::string(1, static_cast<char>(byte)));
+  }
+  // Spark's trimAll works on signed bytes, so even Unicode whitespace remains untrimmed.
+  for (auto const& whitespace : {"\xc2\xa0", "\xe2\x80\x83", "\xe3\x80\x80"}) {
+    inputs.push_back(std::string(whitespace) + "2020-05-01" + whitespace);
+  }
+  auto const strings = test::strings_column_wrapper(inputs.begin(), inputs.end());
+  std::vector<int32_t> const days(inputs.size(), 18'383);
+  for (bool const trim_controls : {false, true}) {
+    std::vector<bool> validity(inputs.size(), false);
+    for (auto const byte : old_whitespace) {
+      validity[byte] = true;
+    }
+    if (trim_controls) {
+      for (int byte = 0; byte <= 32; ++byte) {
+        validity[byte] = true;
+      }
+      validity[127] = true;
+    }
+    auto const expected =
+      test::fixed_width_column_wrapper<timestamp_D>(days.begin(), days.end(), validity.begin());
+    auto const default_result = spark_rapids_jni::parse_csv_date_strings(
+      strings_column_view{strings}, std::nullopt, {false, trim_controls});
+    auto const fallback_result = spark_rapids_jni::parse_csv_date_strings(
+      strings_column_view{strings}, "yyyy/MM/dd", {true, trim_controls});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(default_result->view(), expected);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(fallback_result->view(), expected);
+  }
+}
+
+TEST_F(ParseCsvDateWithFormatTests, NullMaskWordBoundariesAndSlices)
+{
+  for (int const size : {1, 31, 32, 33, 63, 64, 65, 257, 1'025}) {
+    for (int const offset : {0, 1, 31}) {
+      for (int const layout : {0, 1, 2, 3}) {
+        SCOPED_TRACE(::testing::Message()
+                     << "size=" << size << ", offset=" << offset << ", layout=" << layout);
+        std::vector<std::string> inputs(size + offset + 1, "2020-05-01");
+        std::vector<bool> input_validity(inputs.size(), true);
+        std::vector<int32_t> const days(size, 18'383);
+        std::vector<bool> validity(size, true);
+        for (int i = 0; i < size; ++i) {
+          // All valid, all null, all invalid, or mixed with transitions across mask words.
+          bool const is_null         = layout == 1 || (layout == 3 && i % 3 == 1);
+          bool const invalid         = layout == 2 || (layout == 3 && i % 3 == 2);
+          input_validity[offset + i] = !is_null;
+          validity[i]                = !is_null && !invalid;
+          if (invalid) { inputs[offset + i] = "2020-02-30"; }
+        }
+        auto const strings =
+          test::strings_column_wrapper(inputs.begin(), inputs.end(), input_validity.begin());
+        auto const slice = cudf::slice(strings, {offset, offset + size});
+        auto const expected =
+          test::fixed_width_column_wrapper<timestamp_D>(days.begin(), days.end(), validity.begin());
+        for (auto const& format : {std::optional<std::string>{},
+                                   std::optional<std::string>{"yyyy-MM-dd"},
+                                   std::optional<std::string>{"yyyy/MM/dd"}}) {
+          auto const result = spark_rapids_jni::parse_csv_date_strings(
+            strings_column_view{slice[0]}, format, {true, true});
+          CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result->view(), expected);
+        }
+      }
+    }
+  }
+}
+
+TEST_F(ParseCsvDateWithFormatTests, EmptyColumnsWithAndWithoutChildren)
+{
+  auto const strings   = test::strings_column_wrapper{"2020-05-01"};
+  auto const slices    = cudf::slice(strings, {1, 1});
+  auto const childless = cudf::make_empty_column(data_type{type_id::STRING});
+  for (auto const& view : {slices[0], childless->view()}) {
+    for (auto const& format :
+         {std::optional<std::string>{}, std::optional<std::string>{"yyyy-MM-dd"}}) {
+      for (bool const fallback : {false, true}) {
+        auto const result = spark_rapids_jni::parse_csv_date_strings(
+          strings_column_view{view}, format, {fallback, true});
+        EXPECT_EQ(result->type(), data_type{type_id::TIMESTAMP_DAYS});
+        EXPECT_EQ(result->size(), 0);
+        EXPECT_EQ(result->null_count(), 0);
+      }
+    }
+  }
+}
+
+TEST_F(ParseCsvDateWithFormatTests, RejectsUnsupportedFormatsEvenForEmptyInput)
+{
+  auto const empty = cudf::make_empty_column(data_type{type_id::STRING});
+  std::vector<std::string> const formats{"",
+                                         "---",
+                                         "yyy-MM-dd",
+                                         "yyyyy-MM-dd",
+                                         "yyyyyyyyyy-MM-dd",
+                                         "yyyy-M-dd",
+                                         "yyyy-MM-d",
+                                         "yyyy-MMM-dd",
+                                         "yyyy-MM-dd HH:mm:SS",
+                                         "yyyy\xc2\xa0MM",
+                                         "yyyy" + std::string(256, 'M')};
+  for (auto const& format : formats) {
+    SCOPED_TRACE(format);
+    EXPECT_THROW((void)spark_rapids_jni::parse_csv_date_strings(
+                   strings_column_view{empty->view()}, format, {false, true}),
+                 std::invalid_argument);
+  }
 }
 
 TYPED_TEST(StringToIntegerTests, Simple)

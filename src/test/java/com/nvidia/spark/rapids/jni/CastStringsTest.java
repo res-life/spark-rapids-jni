@@ -1375,6 +1375,49 @@ public class CastStringsTest {
   }
 
   @Test
+  void parseCsvDateEpochDayBoundaries() {
+    try (ColumnVector input = ColumnVector.fromStrings(
+            "+5881580-07-10", "+5881580-07-11", "+5881580-07-12",
+            "-5877641-06-24", "-5877641-06-23", "-5877641-06-22", null);
+        ColumnVector actual = CastStrings.parseCsvDate(input, "yyyy-MM-dd", false, true);
+        ColumnVector expected = ColumnVector.timestampDaysFromBoxedInts(
+            Integer.MAX_VALUE - 1, Integer.MAX_VALUE, null,
+            Integer.MIN_VALUE + 1, Integer.MIN_VALUE, null, null)) {
+      AssertUtils.assertColumnsAreEqual(expected, actual);
+    }
+  }
+
+  @Test
+  void parseCsvDateEmptyAndAllNull() {
+    for (String format : new String[] {null, "yyyy-MM-dd"}) {
+      for (boolean fallback : new boolean[] {false, true}) {
+        try (ColumnVector empty = ColumnVector.fromStrings();
+            ColumnVector emptyResult = CastStrings.parseCsvDate(empty, format, fallback, true);
+            ColumnVector emptyExpected = ColumnVector.timestampDaysFromBoxedInts();
+            ColumnVector allNull = ColumnVector.fromStrings(null, null, null);
+            ColumnVector nullResult = CastStrings.parseCsvDate(allNull, format, fallback, true);
+            ColumnVector nullExpected = ColumnVector.timestampDaysFromBoxedInts(null, null, null)) {
+          AssertUtils.assertColumnsAreEqual(emptyExpected, emptyResult);
+          AssertUtils.assertColumnsAreEqual(nullExpected, nullResult);
+        }
+      }
+    }
+  }
+
+  @Test
+  void parseCsvDateRejectsUnsupportedFormats() {
+    try (ColumnVector input = ColumnVector.fromStrings("2020-05-01")) {
+      for (String format : new String[] {"", "yyyy-M-dd", "yyyy-MM-dd HH:mm:SS"}) {
+        Assertions.assertThrows(CudfException.class, () -> {
+          try (ColumnVector result = CastStrings.parseCsvDate(input, format, false, true)) {
+            fail("Unsupported format should be rejected: " + format);
+          }
+        });
+      }
+    }
+  }
+
+  @Test
   void castStringToDate() {
     int expectedDays = (int) LocalDate.of(2025, 1, 1).toEpochDay();
     int negExpectedDays = (int) LocalDate.of(-2025, 1, 1).toEpochDay();
