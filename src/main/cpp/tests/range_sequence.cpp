@@ -25,6 +25,7 @@
 
 #include <rmm/cuda_stream.hpp>
 #include <rmm/error.hpp>
+#include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/limiting_resource_adaptor.hpp>
 
@@ -125,8 +126,9 @@ TEST_F(RangeSequenceTests, NonDefaultStreamAndBoundedWorkingSet)
   rmm::cuda_stream stream{rmm::cuda_stream::flags::non_blocking};
   cuda::stream_ref const stream_ref{stream};
   auto constexpr num_rows = 512 * 1'024;
+  // Async frees ensure an implicit cudaFree synchronization cannot hide stream/lifetime errors.
   // Enough for one output plus range metadata, but not a second full-sized output.
-  rmm::mr::limiting_resource_adaptor limited{rmm::mr::cuda_memory_resource{},
+  rmm::mr::limiting_resource_adaptor limited{rmm::mr::cuda_async_memory_resource{8 * 1'024 * 1'024},
                                              num_rows * sizeof(int64_t) + 4'096};
   std::vector<int64_t> starts(128);
   std::vector<cudf::size_type> sizes(128, num_rows / 128);

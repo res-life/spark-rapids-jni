@@ -16,8 +16,6 @@
 
 #include "range_sequence.hpp"
 
-#include <cudf_test/memory_resource_utilities.hpp>
-
 #include <cudf/column/column_factories.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
@@ -25,6 +23,7 @@
 #include <cudf/lists/filling.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/mr/cuda_async_memory_resource.hpp>
@@ -33,9 +32,24 @@
 
 #include <memory>
 #include <numeric>
+#include <utility>
 #include <vector>
 
 namespace {
+class scoped_device_resource {
+ public:
+  explicit scoped_device_resource(cuda::mr::any_resource<cuda::mr::device_accessible> resource)
+    : previous_{cudf::set_current_device_resource(std::move(resource))}
+  {
+  }
+  ~scoped_device_resource() { cudf::set_current_device_resource(std::move(previous_)); }
+  scoped_device_resource(scoped_device_resource const&)            = delete;
+  scoped_device_resource& operator=(scoped_device_resource const&) = delete;
+
+ private:
+  cuda::mr::any_resource<cuda::mr::device_accessible> previous_;
+};
+
 template <typename T>
 std::unique_ptr<cudf::column> upload(std::vector<T> const& values,
                                      cudf::type_id type,
@@ -118,7 +132,7 @@ void range_sequence(nvbench::state& state)
   auto const stream = cudf::get_default_stream();
   // Use pooled allocations for every method, as in the Spark GPU execution path.
   rmm::mr::cuda_async_memory_resource pool{512 * 1'024 * 1'024};
-  cudf::test::scoped_current_device_resource current_resource{pool};
+  scoped_device_resource current_resource{pool};
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.add_element_count(num_rows);
   state.add_global_memory_writes<int64_t>(num_rows);
