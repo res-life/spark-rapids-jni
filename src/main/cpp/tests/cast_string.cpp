@@ -64,8 +64,11 @@ TEST_F(ParseTimestampWithFormatTests, RejectsConflictingPolicies)
                std::invalid_argument);
 }
 
-TEST_F(ParseTimestampWithFormatTests, RepeatedFieldsKeepExistingBehavior)
+TEST_F(ParseTimestampWithFormatTests, RepeatedFieldsPreserveStrictPolicyDeviation)
 {
+  // LEGACY matches Spark's last-value behavior. CORRECTED/EXCEPTION preserve a known
+  // JNI deviation: Spark rejects conflicting repeated fields. These patterns are
+  // outside the plugin's expression format allowlists.
   auto const strings           = test::strings_column_wrapper{"2020-05-01-05", "2020-05-01-06"};
   constexpr int64_t us_per_day = 86'400'000'000;
   auto const expected =
