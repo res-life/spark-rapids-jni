@@ -54,6 +54,8 @@
 // ParseToTimestamp: java.text.SimpleDateFormat for LEGACY, and java.time.DateTimeFormatter with a
 // STRICT resolver for CORRECTED. CSV dates have a separate entry point below: they require
 // strict widths, signed/extended years and date output, without expression whitespace rules.
+// The JSON read path has different format and whitespace rules;
+// this parser is not a drop-in replacement for it.
 namespace spark_rapids_jni {
 
 namespace {
