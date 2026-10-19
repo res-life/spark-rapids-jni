@@ -137,7 +137,8 @@ TEST_F(ParseCsvDateWithFormatTests, RepeatedFieldsRequireMatchingValues)
     {"yyyy-MM-dd-MM-MM", "1970-01-01-01-01", "1970-01-01-02-01", 0},
     {"yyyy-MM-dd-yyyy", "+02020-05-01-2020", "+02020-05-01-2021", 18'383}};
   for (auto const& e : examples) {
-    SCOPED_TRACE(e.format);
+    SCOPED_TRACE(::testing::Message() << "format=" << e.format << ", matching=" << e.matching
+                                      << ", conflicting=" << e.conflicting);
     auto const strings = test::strings_column_wrapper{e.matching, e.conflicting};
     auto const result  = spark_rapids_jni::parse_csv_date_strings(
       strings_column_view{strings},
