@@ -412,7 +412,10 @@ Java_com_nvidia_spark_rapids_jni_CastStrings_parseCsvDate(JNIEnv* env,
       format.emplace(text.get(), text.size_bytes());
     }
     return cudf::jni::release_as_jlong(spark_rapids_jni::parse_csv_date_strings(
-      input, format, {static_cast<bool>(fallback), static_cast<bool>(trim_control_characters)}));
+      input,
+      format,
+      {.enable_fallback         = static_cast<bool>(fallback),
+       .trim_control_characters = static_cast<bool>(trim_control_characters)}));
   }
   JNI_CATCH(env, 0);
 }
