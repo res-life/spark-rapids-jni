@@ -460,6 +460,7 @@ public class CastStrings {
    *                       first attempt fails; this does not control CPU execution fallback
    * @param trimControlCharacters whether UTF8String.trimAll also trims ISO control characters
    *                              during default-format parsing and the optional retry
+   * @throws CudfException if the format pattern is unsupported.
    * @return a TIMESTAMP_DAYS column, with nulls for invalid inputs
    */
   public static ColumnVector parseCsvDate(ColumnView input, String format,
