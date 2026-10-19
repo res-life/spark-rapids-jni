@@ -102,8 +102,9 @@ struct parsed_dt {
 // internally model a pattern as a sequence of printer-parser steps: each step consumes a
 // well-defined chunk of the input and either succeeds or fails the row.
 enum tok_kind : uint8_t {
-  TOK_DIGITS,           // a = field, b = min_digits, c = max_digits
-  TOK_CSV_YEAR,         // STRICT DateTimeFormatter year with SignStyle.EXCEEDS_PAD
+  TOK_DIGITS,  // a = field, b = min_digits, c = max_digits
+  // STRICT DateTimeFormatter year with SignStyle.EXCEEDS_PAD.
+  TOK_CSV_YEAR,         // a = reserved adjacent digits, b = min_digits, c = max_digits
   TOK_LITERAL,          // a = literal char
   TOK_SKIP_HT_WS,       // skip [ \t]* (legacy whitespace fold)
   TOK_TRAIL_EOF,        // pos must equal end
