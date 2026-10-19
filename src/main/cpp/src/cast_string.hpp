@@ -263,6 +263,11 @@ struct csv_date_parse_options {
  * and consumes the entire input. It accepts signed/extended yyyy years and validates parsed
  * time fields.
  *
+ * The explicit-format attempt range-checks all parsed time fields, including incomplete patterns
+ * such as HH:ss. Spark may accept out-of-range values for these patterns. The plugin excludes
+ * them from GPU CSV parsing and falls back to CPU; their behavior is outside this API's Spark
+ * compatibility guarantee.
+ *
  * When format is absent, the first attempt uses the shared CAST grammar. If the first attempt
  * fails, optional fallback removes all original GMT occurrences and retries that grammar. CAST
  * trims whitespace according to options.trim_control_characters, accepts partial dates, and

@@ -422,6 +422,11 @@ public class CastStrings {
    * and extended years using {@code DateTimeFormatter}'s {@code EXCEEDS_PAD} sign rules.
    * Missing date fields default to 1970/1/1.
    *
+   * <p>The explicit-format attempt range-checks all parsed time fields, including incomplete
+   * patterns such as {@code HH:ss}. Spark may accept out-of-range values for these patterns.
+   * The plugin excludes them from GPU CSV parsing and falls back to CPU; their behavior is
+   * outside this API's Spark compatibility guarantee.
+   *
    * <p>If {@code format} is null, the first attempt uses Spark's CAST-style
    * {@code DefaultDateFormatter} grammar. It trims surrounding whitespace and accepts partial
    * dates such as {@code 2020} and {@code 2020-05}. For example, {@code 2020} directly produces
