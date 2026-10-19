@@ -1,5 +1,5 @@
 #=============================================================================
-# Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -124,6 +124,10 @@ ConfigureTest(SUBSTRING_INDEX
 
 ConfigureTest(REVERSE_STRINGS
     reverse_strings.cpp)
+
+ConfigureTest(ROARING_BITMAP
+    roaring_bitmap.cpp)
+target_link_libraries(ROARING_BITMAP PRIVATE roaring)
 
 ConfigureTest(SHUFFLE_SPLIT
     shuffle_split.cu)
