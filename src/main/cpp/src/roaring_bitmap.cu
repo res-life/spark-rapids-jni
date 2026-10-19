@@ -45,6 +45,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace spark_rapids_jni {
@@ -88,12 +89,12 @@ struct bucket_descriptor {
   bool has_run;
 };
 
-[[noreturn]] void invalid_bitmap(std::string const& reason)
+[[noreturn]] void invalid_bitmap(std::string_view reason)
 {
-  throw std::invalid_argument("Invalid portable Roaring64 bitmap: " + reason);
+  throw std::invalid_argument("Invalid portable Roaring64 bitmap: " + std::string(reason));
 }
 
-void require_bitmap(bool condition, std::string const& reason)
+void require_bitmap(bool condition, std::string_view reason)
 {
   if (not condition) { invalid_bitmap(reason); }
 }
@@ -239,8 +240,7 @@ void parse_roaring32(portable_reader& reader,
   } else {
     invalid_bitmap("unknown Roaring32 cookie");
   }
-  require_bitmap(container_count > 0 and container_count <= 65536,
-                 "invalid Roaring32 container count");
+  require_bitmap(container_count <= 65536, "invalid Roaring32 container count");
 
   auto run_flags = std::vector<std::uint8_t>((container_count + 7) / 8, 0);
   if (has_run) {

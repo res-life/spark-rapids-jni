@@ -31,6 +31,7 @@
 #include <roaring/roaring64.h>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -158,6 +159,50 @@ TEST_F(RoaringBitmapTest, ExistingBitmapUnion)
                    static_cast<std::uint64_t>(max_position)},
                   {false, true, true, true, true, true, true, false, true},
                   stream);
+}
+
+TEST_F(RoaringBitmapTest, ExistingIcebergBitmapWithEmptyBucket)
+{
+  // Serialized by Iceberg 1.10.1 RoaringPositionBitmap for position (1L << 32) + 7.
+  // The payload includes an empty Roaring32 bitmap at high key 0.
+  auto const existing_bytes = std::array<std::uint8_t, 42>{
+    2, 0, 0, 0,  0,  0, 0, 0, 0, 0, 0, 0, 58, 48, 0, 0,  0, 0, 0, 0, 1,
+    0, 0, 0, 58, 48, 0, 0, 1, 0, 0, 0, 0, 0,  0,  0, 16, 0, 0, 0, 7, 0};
+  auto const existing_span = std::as_bytes(std::span{existing_bytes});
+  auto const stream        = cudf::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<std::int64_t> positions{(std::int64_t{1} << 32) + 8};
+  auto result = spark_rapids_jni::build_and_serialize_roaring64(positions, {existing_span}, stream);
+  auto bytes  = copy_to_host(result, stream);
+
+  EXPECT_EQ(result.cardinality, 2);
+  expect_contains(bytes,
+                  {0,
+                   std::uint64_t{1} << 32,
+                   (std::uint64_t{1} << 32) + 7,
+                   (std::uint64_t{1} << 32) + 8,
+                   (std::uint64_t{1} << 32) + 9},
+                  {false, false, true, true, false},
+                  stream);
+}
+
+TEST_F(RoaringBitmapTest, ExistingBitmapWithOnlyEmptyBucket)
+{
+  // A portable Roaring64 bitmap containing one empty Roaring32 bitmap at high
+  // key 0.
+  auto const existing_bytes =
+    std::array<std::uint8_t, 20>{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 58, 48, 0, 0, 0, 0, 0, 0};
+  auto const existing_span = std::as_bytes(std::span{existing_bytes});
+  auto const stream        = cudf::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<std::int64_t> positions{};
+  auto result = spark_rapids_jni::build_and_serialize_roaring64(positions, {existing_span}, stream);
+  auto bytes  = copy_to_host(result, stream);
+
+  EXPECT_EQ(result.cardinality, 0);
+  EXPECT_EQ(bytes, std::vector<std::byte>(8));
+  expect_contains(bytes, {0, std::uint64_t{1} << 32}, {false, false}, stream);
+  EXPECT_THROW(std::ignore = spark_rapids_jni::build_and_serialize_roaring64(
+                 positions, {existing_span.first(existing_span.size() - 1)}, stream),
+               std::invalid_argument);
 }
 
 TEST_F(RoaringBitmapTest, ConsecutiveRangeUsesRunContainer)
