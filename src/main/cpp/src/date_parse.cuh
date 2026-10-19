@@ -156,6 +156,9 @@ struct cast_parser {
   __device__ bool operator()(cudf::string_view input, cudf::timestamp_D& result) const
   {
     auto const* p = cuda::std::bit_cast<unsigned char const*>(input.data());
+    // Preserve the existing CAST API's ISO control character trimming, including
+    // its deviation on older Spark runtimes. CSV passes the runtime trim policy;
+    // updating CAST requires a separate toDate API and caller change.
     return parse_cast(cursor<>{p, 0, input.size_bytes()}, true, result);
   }
 };
