@@ -34,11 +34,10 @@ public final class RangeSequence {
    * For example, starts {@code [100, 200]} and sizes {@code [3, 2]} produce
    * {@code [100, 101, 102, 200, 201]}. Empty ranges are ignored; starts need not be sorted.
    *
-   * <p>The CPU validates ranges. Cumulative ends use a CPU or GPU scan based on range count
-   * and output density.
-   * The GPU writes the output directly into the final column, using O(number of ranges)
-   * temporary device memory without materializing and concatenating separate sequences.
-   * A single range needs no device metadata allocation. Empty output launches no kernel.
+   * <p>The CPU validates ranges before device allocation. Native code delegates generation to
+   * libcudf: a single range uses sequence, while multiple ranges use lists::sequences and transfer
+   * the owning data child without copying its values. Temporary device storage is
+   * O(number of ranges), and empty output performs no device allocation or generation.
    *
    * @param starts first value of each sequence; must have the same length as sizes
    * @param sizes nonnegative number of values in each sequence
