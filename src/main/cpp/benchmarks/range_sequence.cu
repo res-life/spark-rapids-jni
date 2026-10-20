@@ -15,6 +15,7 @@
  */
 
 #include "range_sequence.hpp"
+#include "range_sequence_detail.hpp"
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/concatenate.hpp>
@@ -139,7 +140,12 @@ void range_sequence(nvbench::state& state)
   // Host metadata preparation/upload is part of each measured invocation for every method.
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     std::unique_ptr<cudf::column> output;
-    if (method == "kernel") {
+    if (method == "host_scan" || method == "device_scan") {
+      auto const scan = method == "device_scan"
+                          ? spark_rapids_jni::detail::range_sequence_scan::DEVICE
+                          : spark_rapids_jni::detail::range_sequence_scan::HOST;
+      output = spark_rapids_jni::detail::generate_range_sequence(starts, sizes, scan, stream, pool);
+    } else if (method == "kernel") {
       output = spark_rapids_jni::generate_range_sequence(starts, sizes, stream, pool);
     } else if (method == "host") {
       output = host_sequence(starts, sizes, stream, pool);
@@ -150,6 +156,8 @@ void range_sequence(nvbench::state& state)
     }
   });
 }
+
+void range_sequence_scan(nvbench::state& state) { range_sequence(state); }
 }  // namespace
 
 NVBENCH_BENCH(range_sequence)
@@ -157,3 +165,13 @@ NVBENCH_BENCH(range_sequence)
   .add_int64_axis("rows", {4'096, 65'536, 524'288, 2'097'152, 4'194'304})
   .add_int64_axis("ranges", {1, 2, 32, 128, 1'024})
   .add_string_axis("method", {"kernel", "host", "lists", "concatenate"});
+
+// Include all host preparation, allocation, transfers and output generation when choosing the
+// crossover. More ranges than rows also exercise repeated cumulative ends from empty ranges.
+NVBENCH_BENCH(range_sequence_scan)
+  .set_name("Range sequence scan crossover")
+  .add_int64_axis("rows", {65'536, 524'288, 4'194'304, 16'777'216, 67'108'864})
+  .add_int64_axis(
+    "ranges",
+    {4'096, 16'384, 32'768, 49'152, 65'536, 98'304, 131'072, 262'144, 1'048'576, 4'194'304})
+  .add_string_axis("method", {"host_scan", "device_scan", "kernel"});

@@ -16,6 +16,8 @@
 
 #include "range_sequence.hpp"
 
+#include "range_sequence_detail.hpp"
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -29,6 +31,7 @@
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/limiting_resource_adaptor.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <limits>
@@ -196,5 +199,128 @@ TEST_F(RangeSequenceTests, MetadataAllocationFailureReleasesOutput)
                                               cudf::get_default_stream(),
                                               limited);
   EXPECT_EQ(output->size(), num_rows);
+}
+
+TEST_F(RangeSequenceTests, ScanCrossoverAndSparseRanges)
+{
+  auto constexpr threshold = spark_rapids_jni::detail::range_sequence_device_scan_threshold;
+  for (auto const count : {threshold - 1, threshold, threshold + 1, 4 * threshold}) {
+    std::vector<int64_t> starts(count);
+    std::vector<cudf::size_type> sizes(count);
+    std::vector<int64_t> expected;
+    for (std::size_t i = 0; i < count; ++i) {
+      starts[i] = i % 2 == 0 ? -static_cast<int64_t>(i) * 100 : static_cast<int64_t>(i) * 100;
+      // Empty ranges at both ends and throughout, with uneven nonempty ranges in input order.
+      sizes[i] =
+        i == 0 || i + 1 == count ? 0 : (i % 7 == 0 ? static_cast<cudf::size_type>(i % 5 + 1) : 0);
+      for (cudf::size_type row = 0; row < sizes[i]; ++row) {
+        expected.push_back(starts[i] + row);
+      }
+    }
+    auto const output          = spark_rapids_jni::generate_range_sequence(starts, sizes);
+    auto const expected_column = long_column(expected.begin(), expected.end());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*output, expected_column);
+    EXPECT_FALSE(output->nullable());
+  }
+}
+
+TEST_F(RangeSequenceTests, DeviceScanOnNonDefaultStream)
+{
+  rmm::cuda_stream stream{rmm::cuda_stream::flags::non_blocking};
+  cuda::stream_ref const stream_ref{stream};
+  rmm::mr::cuda_async_memory_resource mr{16 * 1'024 * 1'024};
+  auto constexpr count = spark_rapids_jni::detail::range_sequence_device_scan_threshold;
+  std::vector<int64_t> starts(count, std::numeric_limits<int64_t>::max());
+  std::vector<cudf::size_type> sizes(count, 0);
+  auto const first  = count / 3;
+  auto const last   = 2 * count / 3;
+  starts[first]     = std::numeric_limits<int64_t>::min();
+  starts[last]      = std::numeric_limits<int64_t>::max() - 2;
+  sizes[first]      = 3;
+  sizes[last]       = 3;
+  auto const output = spark_rapids_jni::generate_range_sequence(starts, sizes, stream_ref, mr);
+  // Input buffers can be changed immediately after return, before output generation completes.
+  std::fill(starts.begin(), starts.end(), 0);
+  std::fill(sizes.begin(), sizes.end(), 0);
+  auto const host = cudf::detail::make_std_vector(
+    cudf::device_span<int64_t const>{output->view().data<int64_t>(), 6}, stream_ref);
+  auto constexpr min = std::numeric_limits<int64_t>::min();
+  auto constexpr max = std::numeric_limits<int64_t>::max();
+  EXPECT_EQ(host, (std::vector<int64_t>{min, min + 1, min + 2, max - 2, max - 1, max}));
+
+  auto const empty = spark_rapids_jni::generate_range_sequence(starts, sizes, stream_ref, mr);
+  EXPECT_EQ(empty->size(), 0);
+  EXPECT_FALSE(empty->nullable());
+}
+
+TEST_F(RangeSequenceTests, DeviceScanAllocationFailuresReleaseOutput)
+{
+  auto constexpr count = spark_rapids_jni::detail::range_sequence_device_scan_threshold;
+  std::vector<int64_t> starts(count, 0);
+  std::vector<cudf::size_type> sizes(count, 1);
+  auto constexpr output_bytes = count * sizeof(int64_t);
+  for (auto const limit : {output_bytes,
+                           output_bytes + count * sizeof(int64_t),
+                           output_bytes + count * (sizeof(int64_t) + sizeof(cudf::size_type))}) {
+    rmm::mr::limiting_resource_adaptor limited{rmm::mr::cuda_memory_resource{}, limit};
+    EXPECT_THROW(static_cast<void>(spark_rapids_jni::generate_range_sequence(
+                   starts, sizes, cudf::get_default_stream(), limited)),
+                 rmm::bad_alloc);
+    EXPECT_EQ(limited.get_allocated_bytes(), std::size_t{0});
+  }
+}
+
+TEST_F(RangeSequenceTests, DeviceScanBoundedWorkingSet)
+{
+  auto constexpr count        = spark_rapids_jni::detail::range_sequence_device_scan_threshold;
+  auto constexpr num_rows     = 2 * count;
+  auto constexpr output_bytes = num_rows * sizeof(int64_t);
+  // One output, the 12-byte-per-range metadata, and scan scratch; less than two full outputs.
+  auto constexpr limit =
+    output_bytes + count * (sizeof(int64_t) + sizeof(cudf::size_type)) + 65'536;
+  static_assert(limit < 2 * output_bytes);
+  rmm::cuda_stream stream{rmm::cuda_stream::flags::non_blocking};
+  cuda::stream_ref const stream_ref{stream};
+  rmm::mr::limiting_resource_adaptor limited{
+    rmm::mr::cuda_async_memory_resource{16 * 1'024 * 1'024}, limit};
+  std::vector<int64_t> starts(count);
+  std::vector<cudf::size_type> sizes(count, 2);
+  for (std::size_t i = 0; i < count; ++i) {
+    starts[i] = static_cast<int64_t>(i) * 100;
+  }
+  {
+    auto const output =
+      spark_rapids_jni::generate_range_sequence(starts, sizes, stream_ref, limited);
+    auto const host = cudf::detail::make_std_vector(
+      cudf::device_span<int64_t const>{output->view().data<int64_t>(), num_rows}, stream_ref);
+    for (std::size_t row = 0; row < num_rows; ++row) {
+      ASSERT_EQ(host[row], starts[row / 2] + static_cast<int64_t>(row % 2));
+    }
+  }
+  stream.synchronize();
+  EXPECT_EQ(limited.get_allocated_bytes(), std::size_t{0});
+}
+
+TEST_F(RangeSequenceTests, RowDensityCrossover)
+{
+  auto constexpr count = spark_rapids_jni::detail::range_sequence_device_scan_threshold;
+  auto constexpr rows_per_range =
+    spark_rapids_jni::detail::range_sequence_device_scan_rows_per_range;
+  std::vector<int64_t> starts(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    starts[i] = -static_cast<int64_t>(i) * 1'000;
+  }
+  for (auto const size : {rows_per_range - 1, rows_per_range, rows_per_range + 1}) {
+    std::vector<cudf::size_type> sizes(count, static_cast<cudf::size_type>(size));
+    auto const output = spark_rapids_jni::generate_range_sequence(starts, sizes);
+    auto const host   = cudf::detail::make_std_vector(
+      cudf::device_span<int64_t const>{output->view().data<int64_t>(),
+                                         static_cast<std::size_t>(output->size())},
+      cudf::get_default_stream());
+    ASSERT_EQ(host.size(), count * size);
+    for (std::size_t row = 0; row < host.size(); ++row) {
+      ASSERT_EQ(host[row], starts[row / size] + static_cast<int64_t>(row % size));
+    }
+  }
 }
 }  // namespace
