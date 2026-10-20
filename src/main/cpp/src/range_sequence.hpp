@@ -33,23 +33,24 @@ namespace spark_rapids_jni {
  * @brief Expand host-side (start, size) ranges into one owning, non-nullable INT64 column.
  *
  * Ranges retain input order, including gaps, overlaps, or decreasing starts. Zero sizes produce
- * no values. The CPU validates metadata, then libcudf generates the sequences. Multiple ranges
- * use cudf::lists::sequences and transfer its owning data child without copying. One range uses
- * cudf::sequence. An empty result performs no device allocation or generation.
+ * no values. The CPU validates metadata. Cumulative range ends use a CPU or GPU scan according to
+ * range count and output density; one GPU generation kernel writes the final column without
+ * per-range device sequences or concatenate. A single range needs no device metadata, and an
+ * empty result launches no kernel.
  *
- * Host inputs may be released when this function returns. Uploaded input columns and the result
- * use @p mr; libcudf internal scratch uses the current device resource. All device work uses
- * @p stream. Temporary device storage is O(starts.size()). Allocation failures propagate.
+ * Host inputs may be released when this function returns. All device allocations use @p mr and
+ * all device work uses @p stream. Temporary device storage is O(starts.size()). Allocation
+ * failures propagate to the caller.
  *
- * @throws std::invalid_argument if lengths differ, a size is negative, or the range count plus
- * one exceeds cudf::size_type's maximum (the LIST offsets column needs one extra element).
+ * @throws std::invalid_argument if lengths differ, a size is negative, or there are more than
+ * cudf::size_type's maximum number of ranges.
  * @throws std::overflow_error if the total size exceeds cudf::size_type's maximum or a generated
  * value exceeds INT64_MAX.
  *
  * @param starts First value of each range; need not be sorted
  * @param sizes Nonnegative number of values in each range
- * @param stream CUDA stream for allocations, input upload, and libcudf generation
- * @param mr Device memory resource for the input columns and output
+ * @param stream CUDA stream for allocations, metadata upload, and generation
+ * @param mr Device memory resource for the output and temporary metadata
  * @return Column containing the concatenated sequences, owned by the caller
  */
 std::unique_ptr<cudf::column> generate_range_sequence(
