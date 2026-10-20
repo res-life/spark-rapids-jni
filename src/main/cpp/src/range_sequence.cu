@@ -97,23 +97,19 @@ CUDF_KERNEL void generate_ranges(StartIterator starts,
 
 }  // namespace
 
-std::unique_ptr<cudf::column> detail::generate_range_sequence(
-  std::span<int64_t const> starts,
-  std::span<cudf::size_type const> sizes,
-  range_sequence_scan scan,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+std::unique_ptr<cudf::column> generate_range_sequence(std::span<int64_t const> starts,
+                                                      std::span<cudf::size_type const> sizes,
+                                                      cuda::stream_ref stream,
+                                                      rmm::device_async_resource_ref mr)
 {
   auto const num_rows = validate_ranges(starts, sizes);
   if (num_rows == 0) { return cudf::make_empty_column(cudf::type_id::INT64); }
 
-  auto constexpr rows_per_range = range_sequence_device_scan_rows_per_range;
+  auto constexpr rows_per_range = detail::range_sequence_device_scan_rows_per_range;
   auto const min_ranges_for_rows =
     (static_cast<std::size_t>(num_rows) + rows_per_range - 1) / rows_per_range;
-  auto const device_scan =
-    scan == range_sequence_scan::DEVICE ||
-    (scan == range_sequence_scan::AUTOMATIC &&
-     starts.size() >= range_sequence_device_scan_threshold && starts.size() >= min_ranges_for_rows);
+  auto const device_scan = starts.size() >= detail::range_sequence_device_scan_threshold &&
+                           starts.size() >= min_ranges_for_rows;
 
   auto output = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::INT64}, num_rows, cudf::mask_state::UNALLOCATED, stream, mr);
@@ -163,15 +159,6 @@ std::unique_ptr<cudf::column> detail::generate_range_sequence(
   }
   CUDF_CUDA_TRY(cudaPeekAtLastError());
   return output;
-}
-
-std::unique_ptr<cudf::column> generate_range_sequence(std::span<int64_t const> starts,
-                                                      std::span<cudf::size_type const> sizes,
-                                                      cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
-{
-  return detail::generate_range_sequence(
-    starts, sizes, detail::range_sequence_scan::AUTOMATIC, stream, mr);
 }
 
 }  // namespace spark_rapids_jni

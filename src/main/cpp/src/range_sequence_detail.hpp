@@ -16,24 +16,13 @@
 
 #pragma once
 
-#include "range_sequence.hpp"
-
 #include <cstddef>
 
 namespace spark_rapids_jni::detail {
-
-enum class range_sequence_scan { AUTOMATIC, HOST, DEVICE };
 
 // End-to-end L4 measurements include host validation/upload and output generation. Long ranges
 // favor the packed host-scan metadata during generation, so range count alone is insufficient.
 inline constexpr std::size_t range_sequence_device_scan_threshold      = 65'536;
 inline constexpr std::size_t range_sequence_device_scan_rows_per_range = 64;
-
-// Benchmarks can compare both strategies independently of automatic selection.
-std::unique_ptr<cudf::column> generate_range_sequence(std::span<int64_t const> starts,
-                                                      std::span<cudf::size_type const> sizes,
-                                                      range_sequence_scan scan,
-                                                      cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr);
 
 }  // namespace spark_rapids_jni::detail

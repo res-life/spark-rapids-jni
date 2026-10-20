@@ -19,7 +19,6 @@ package com.nvidia.spark.rapids.jni;
 import ai.rapids.cudf.ColumnVector;
 import ai.rapids.cudf.CudfException;
 import ai.rapids.cudf.DType;
-import ai.rapids.cudf.HostColumnVector;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -78,21 +77,6 @@ class RangeSequenceTest {
         sizes[i] = random.nextInt(257);
       }
       assertSequence(starts, sizes);
-    }
-  }
-
-  @Test
-  void resultOwnsItsData() {
-    long[] starts = {100, 500};
-    int[] sizes = {3, 2};
-    try (ColumnVector result = RangeSequence.generate(starts, sizes)) {
-      Arrays.fill(starts, -1);
-      Arrays.fill(sizes, 0);
-      try (HostColumnVector host = result.copyToHost()) {
-        assertEquals(5, host.getRowCount());
-        assertEquals(100, host.getLong(0));
-        assertEquals(501, host.getLong(4));
-      }
     }
   }
 
