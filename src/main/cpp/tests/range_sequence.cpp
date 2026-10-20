@@ -17,10 +17,12 @@
 #include "range_sequence.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <rmm/aligned.hpp>
 #include <rmm/cuda_stream.hpp>
 #include <rmm/error.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
@@ -42,7 +44,8 @@ auto constexpr max = std::numeric_limits<int64_t>::max();
 
 void assert_sequence(std::vector<int64_t> const& starts,
                      std::vector<cudf::size_type> const& sizes,
-                     cuda::stream_ref stream = cudf::get_default_stream())
+                     cuda::stream_ref stream           = cudf::get_default_stream(),
+                     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   std::vector<int64_t> expected;
   for (std::size_t range = 0; range < starts.size(); ++range) {
@@ -50,7 +53,7 @@ void assert_sequence(std::vector<int64_t> const& starts,
       expected.push_back(starts[range] + row);
     }
   }
-  auto const output = spark_rapids_jni::generate_range_sequence(starts, sizes, stream);
+  auto const output = spark_rapids_jni::generate_range_sequence(starts, sizes, stream, mr);
   EXPECT_EQ(output->type(), cudf::data_type{cudf::type_id::INT64});
   EXPECT_EQ(
     expected,
@@ -77,7 +80,11 @@ TEST_F(RangeSequenceTests, ScanPaths)
     sizes[1]       = 0;
     starts.back()  = max - 2;
     sizes.back()   = 3;
-    assert_sequence(starts, sizes, stream);
+    auto const output_bytes =
+      rmm::align_up((ranges + 2) * sizeof(int64_t), rmm::CUDA_ALLOCATION_ALIGNMENT);
+    rmm::mr::limiting_resource_adaptor output_mr{rmm::mr::cuda_async_memory_resource{},
+                                                 output_bytes};
+    assert_sequence(starts, sizes, stream, output_mr);
   }
 }
 
@@ -105,22 +112,24 @@ TEST_F(RangeSequenceTests, InvalidRanges)
 
 TEST_F(RangeSequenceTests, AllocationFailures)
 {
-  auto expect_failure = [](std::size_t ranges, std::size_t limit, cudf::size_type size = 1) {
+  auto expect_failure = [](std::size_t ranges, std::size_t limit, bool limit_output = false) {
+    auto const output_mr = cudf::get_current_device_resource_ref();
     rmm::mr::limiting_resource_adaptor limited{rmm::mr::cuda_async_memory_resource{}, limit};
+    cudf::test::scoped_current_device_resource scoped_mr{limited};
     EXPECT_THROW(static_cast<void>(spark_rapids_jni::generate_range_sequence(
                    std::vector<int64_t>(ranges, 0),
-                   std::vector<cudf::size_type>(ranges, size),
+                   std::vector<cudf::size_type>(ranges, 1),
                    cudf::get_default_stream(),
-                   limited)),
+                   limit_output ? rmm::device_async_resource_ref{limited} : output_mr)),
                  rmm::bad_alloc);
   };
-  expect_failure(1, 0);
-  expect_failure(2, 4'096 * sizeof(int64_t), 2'048);
+  expect_failure(1, 0, true);
+  expect_failure(2, 0);
   auto constexpr count = std::size_t{2'048};
   for (auto const metadata_bytes : {std::size_t{0},
                                     count * sizeof(int64_t),
                                     count * (sizeof(int64_t) + sizeof(cudf::size_type))}) {
-    expect_failure(count, count * sizeof(int64_t) + metadata_bytes);
+    expect_failure(count, metadata_bytes);
   }
 }
 }  // namespace

@@ -38,9 +38,9 @@ namespace spark_rapids_jni {
  * per-range device sequences or concatenate. A single range needs no device metadata, and an
  * empty result launches no kernel.
  *
- * Host inputs may be released when this function returns. All device allocations use @p mr and
- * all device work uses @p stream. Temporary device storage is O(starts.size()). Allocation
- * failures propagate to the caller.
+ * Host inputs may be released when this function returns. Output allocations use @p mr; temporary
+ * device allocations use the current device resource. All device work uses @p stream. Temporary
+ * device storage is O(starts.size()). Allocation failures propagate to the caller.
  *
  * @throws std::invalid_argument if lengths differ, a size is negative, or there are more than
  * cudf::size_type's maximum number of ranges.
@@ -50,7 +50,7 @@ namespace spark_rapids_jni {
  * @param starts First value of each range; need not be sorted
  * @param sizes Nonnegative number of values in each range
  * @param stream CUDA stream for allocations, metadata upload, and generation
- * @param mr Device memory resource for the output and temporary metadata
+ * @param mr Device memory resource for the output
  * @return Column containing the concatenated sequences, owned by the caller
  */
 std::unique_ptr<cudf::column> generate_range_sequence(

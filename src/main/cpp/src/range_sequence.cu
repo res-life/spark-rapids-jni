@@ -61,8 +61,9 @@ std::unique_ptr<cudf::column> generate_range_sequence(std::span<int64_t const> s
 
   auto output = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::INT64}, num_rows, cudf::mask_state::UNALLOCATED, stream, mr);
-  auto const data   = output->mutable_view().data<int64_t>();
-  auto const policy = rmm::exec_policy_nosync(stream, mr);
+  auto const data    = output->mutable_view().data<int64_t>();
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const policy  = rmm::exec_policy_nosync(stream, temp_mr);
   if (starts.size() == 1) {
     thrust::sequence(policy, data, data + num_rows, starts.front());
     return output;
@@ -75,8 +76,8 @@ std::unique_ptr<cudf::column> generate_range_sequence(std::span<int64_t const> s
   std::copy(starts.begin(), starts.end(), host_starts.begin());
   std::copy(sizes.begin(), sizes.end(), host_ends.begin());
   if (count <= 1'024) { std::partial_sum(host_ends.begin(), host_ends.end(), host_ends.begin()); }
-  auto device_starts = cudf::detail::make_device_uvector_async(host_starts, stream, mr);
-  auto device_ends   = cudf::detail::make_device_uvector_async(host_ends, stream, mr);
+  auto device_starts = cudf::detail::make_device_uvector_async(host_starts, stream, temp_mr);
+  auto device_ends   = cudf::detail::make_device_uvector_async(host_ends, stream, temp_mr);
   if (count > 1'024) {
     thrust::inclusive_scan(policy, device_ends.begin(), device_ends.end(), device_ends.begin());
   }
