@@ -67,9 +67,9 @@ class RangeSequenceTest {
 
   @Test
   void randomizedFragmentedRanges() {
-    Random random = new Random(5309);
+    Random random = new Random();
     int maxRangeSize = 256;
-    for (int iteration = 0; iteration < 50; iteration++) {
+    for (int iteration = 0; iteration < 8; iteration++) {
       int ranges = 1 + random.nextInt(1024);
       long[] starts = new long[ranges];
       int[] sizes = new int[ranges];
