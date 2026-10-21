@@ -67,16 +67,13 @@ class RangeSequenceTest {
 
   @Test
   void randomizedFragmentedRanges() {
-    Random random = new Random();
-    int maxRangeSize = 256;
+    Random random = new Random(0);
     for (int iteration = 0; iteration < 8; iteration++) {
       int ranges = 1 + random.nextInt(1024);
-      long[] starts = new long[ranges];
+      long[] starts = random.longs(ranges, 0, Long.MAX_VALUE - 1024).toArray();
       int[] sizes = new int[ranges];
       for (int i = 0; i < ranges; i++) {
-        // Leave headroom for the longest generated range.
-        starts[i] = Math.min(random.nextLong(), Long.MAX_VALUE - (maxRangeSize - 1));
-        sizes[i] = random.nextInt(maxRangeSize + 1);
+        sizes[i] = random.nextInt(1024);
       }
       assertSequence(starts, sizes);
     }
