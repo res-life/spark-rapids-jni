@@ -17,6 +17,7 @@
 package com.nvidia.spark.rapids.jni;
 
 import ai.rapids.cudf.ColumnVector;
+import ai.rapids.cudf.CudfColumnSizeOverflowException;
 import ai.rapids.cudf.CudfException;
 import ai.rapids.cudf.DType;
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,7 @@ import java.util.Random;
 import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertThrowsExactly;
 
 class RangeSequenceTest {
   private static void assertSequence(long[] starts, int[] sizes) {
@@ -96,13 +98,15 @@ class RangeSequenceTest {
   void invalidInputs() {
     assertThrows(NullPointerException.class, () -> RangeSequence.generate(null, new int[0]));
     assertThrows(NullPointerException.class, () -> RangeSequence.generate(new long[0], null));
-    assertThrows(CudfException.class,
+    assertThrowsExactly(CudfException.class,
         () -> RangeSequence.generate(new long[]{0}, new int[0]));
-    assertThrows(CudfException.class,
+    assertThrowsExactly(CudfException.class,
         () -> RangeSequence.generate(new long[]{0, 1}, new int[]{0, -1}));
-    assertThrows(CudfException.class,
+    assertThrowsExactly(CudfColumnSizeOverflowException.class,
         () -> RangeSequence.generate(new long[]{0, 0}, new int[]{Integer.MAX_VALUE, 1}));
-    assertThrows(CudfException.class,
+    assertThrowsExactly(CudfException.class,
+        () -> RangeSequence.generate(new long[]{Long.MAX_VALUE}, new int[]{2}));
+    assertThrowsExactly(CudfException.class,
         () -> RangeSequence.generate(new long[]{0, Long.MAX_VALUE}, new int[]{0, 2}));
   }
 }

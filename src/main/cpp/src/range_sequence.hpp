@@ -42,10 +42,9 @@ namespace spark_rapids_jni {
  * device allocations use the current device resource. All device work uses @p stream. Temporary
  * device storage is O(starts.size()). Allocation failures propagate to the caller.
  *
- * @throws std::invalid_argument if lengths differ, a size is negative, or there are more than
- * cudf::size_type's maximum number of ranges.
- * @throws std::overflow_error if the total size exceeds cudf::size_type's maximum or a generated
- * value exceeds INT64_MAX.
+ * @throws std::invalid_argument if lengths differ, a size is negative, there are more than
+ * cudf::size_type's maximum number of ranges, or a generated value exceeds INT64_MAX.
+ * @throws std::overflow_error if the total size exceeds cudf::size_type's maximum.
  *
  * @param starts First value of each range; need not be sorted
  * @param sizes Nonnegative number of values in each range

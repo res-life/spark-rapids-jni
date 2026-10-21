@@ -44,8 +44,9 @@ public final class RangeSequence {
    * @param sizes nonnegative number of values in each sequence
    * @return a non-nullable INT64 column owned by the caller, which must close it
    * @throws NullPointerException if either input array is null
-   * @throws ai.rapids.cudf.CudfException if lengths differ, a size is negative, the total size
-   *     exceeds Integer.MAX_VALUE, or a sequence value overflows INT64
+   * @throws ai.rapids.cudf.CudfException if lengths differ, a size is negative, or a sequence
+   *     value overflows INT64
+   * @throws ai.rapids.cudf.CudfColumnSizeOverflowException if the total size exceeds Integer.MAX_VALUE
    */
   public static ColumnVector generate(long[] starts, int[] sizes) {
     Objects.requireNonNull(starts, "starts");

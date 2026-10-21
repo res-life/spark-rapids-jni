@@ -51,7 +51,7 @@ std::unique_ptr<cudf::column> generate_range_sequence(std::span<int64_t const> s
     CUDF_EXPECTS(sizes[i] >= 0, "Range sizes must be nonnegative", std::invalid_argument);
     CUDF_EXPECTS(sizes[i] == 0 || starts[i] <= std::numeric_limits<int64_t>::max() - (sizes[i] - 1),
                  "Range sequence overflows INT64",
-                 std::overflow_error);
+                 std::invalid_argument);
     CUDF_EXPECTS(sizes[i] <= max_rows - num_rows,
                  "Range sequence exceeds column size limit",
                  std::overflow_error);

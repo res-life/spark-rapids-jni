@@ -94,8 +94,8 @@ TEST_F(RangeSequenceTests, InvalidRanges)
   EXPECT_THROW(generate({0}, {}), std::invalid_argument);
   EXPECT_THROW(generate({}, {1}), std::invalid_argument);
   EXPECT_THROW(generate({0, 0}, {0, -1}), std::invalid_argument);
-  EXPECT_THROW(generate({max}, {2}), std::overflow_error);
-  EXPECT_THROW(generate({0, max - 1}, {0, 3}), std::overflow_error);
+  EXPECT_THROW(generate({max}, {2}), std::invalid_argument);
+  EXPECT_THROW(generate({0, max - 1}, {0, 3}), std::invalid_argument);
   EXPECT_THROW(generate({0, 0}, {max_rows, 1}), std::overflow_error);
 }
 }  // namespace
