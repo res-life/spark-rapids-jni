@@ -68,7 +68,7 @@ TEST_F(RangeSequenceTests, Sequences)
   rmm::cuda_stream stream{rmm::cuda_stream::flags::non_blocking};
   assert_sequence({max - 2}, {3}, stream);
   assert_sequence({max}, {0}, stream);
-  for (auto const ranges : {0, 1, 2, 8, 1'024, 1'025}) {
+  for (auto const ranges : {0, 1, 2, 8, 4'097}) {
     SCOPED_TRACE(ranges);
     std::vector<int64_t> starts(ranges, -1);
     std::vector<cudf::size_type> sizes(ranges, 3);

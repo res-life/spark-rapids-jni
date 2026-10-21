@@ -68,8 +68,8 @@ class RangeSequenceTest {
   }
 
   @Test
-  void manyRanges() {
-    long[] starts = new long[1025];
+  void manyRangesWithEmptyRanges() {
+    long[] starts = new long[4097];
     int[] sizes = new int[starts.length];
     for (int i = 0; i < starts.length; i++) {
       starts[i] = 10L * i;
