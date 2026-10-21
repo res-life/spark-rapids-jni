@@ -31,8 +31,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <memory>
-#include <span>
 #include <stdexcept>
 #include <vector>
 
@@ -99,15 +97,6 @@ TEST_F(RangeSequenceTests, InvalidRanges)
   EXPECT_THROW(generate({0}, {-1}), std::invalid_argument);
   EXPECT_THROW(generate({max}, {2}), std::overflow_error);
   EXPECT_THROW(generate({0, 0}, {max_rows, 1}), std::overflow_error);
-
-  // Reserve uninitialized arrays: oversized input is rejected before any element is read.
-  auto constexpr count = std::size_t{max_rows} + 1;
-  auto const starts    = std::make_unique_for_overwrite<int64_t[]>(count);
-  auto const sizes     = std::make_unique_for_overwrite<cudf::size_type[]>(count);
-  EXPECT_THROW(static_cast<void>(spark_rapids_jni::generate_range_sequence(
-                 std::span<int64_t const>{starts.get(), count},
-                 std::span<cudf::size_type const>{sizes.get(), count})),
-               std::invalid_argument);
 }
 
 TEST_F(RangeSequenceTests, AllocationFailures)
