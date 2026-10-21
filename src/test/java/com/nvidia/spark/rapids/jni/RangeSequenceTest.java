@@ -68,7 +68,7 @@ class RangeSequenceTest {
   }
 
   @Test
-  void moreThan1024Ranges() {
+  void manyRanges() {
     long[] starts = new long[1025];
     int[] sizes = new int[starts.length];
     for (int i = 0; i < starts.length; i++) {

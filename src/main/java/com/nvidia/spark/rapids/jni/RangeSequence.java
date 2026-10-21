@@ -34,8 +34,7 @@ public final class RangeSequence {
    * For example, starts {@code [100, 200]} and sizes {@code [3, 2]} produce
    * {@code [100, 101, 102, 200, 201]}. Empty ranges are ignored; starts need not be sorted.
    *
-   * <p>The CPU validates ranges. Cumulative ends use a CPU scan for at most 1024 ranges
-   * and a GPU scan otherwise.
+   * <p>The CPU validates ranges and computes cumulative ends.
    * The GPU writes the output directly into the final column, using O(number of ranges)
    * temporary device memory without materializing and concatenating separate sequences.
    * A single range needs no device metadata allocation. Empty output launches no kernel.

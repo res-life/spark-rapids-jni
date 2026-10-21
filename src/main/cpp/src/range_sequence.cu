@@ -25,7 +25,6 @@
 #include <cuda/functional>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
-#include <thrust/scan.h>
 #include <thrust/sequence.h>
 #include <thrust/tabulate.h>
 
@@ -74,14 +73,10 @@ std::unique_ptr<cudf::column> generate_range_sequence(std::span<int64_t const> s
   auto host_starts = cudf::detail::make_pinned_vector_async<int64_t>(count, stream);
   auto host_ends   = cudf::detail::make_pinned_vector_async<cudf::size_type>(count, stream);
   std::copy(starts.begin(), starts.end(), host_starts.begin());
-  std::copy(sizes.begin(), sizes.end(), host_ends.begin());
-  if (count <= 1'024) { std::partial_sum(host_ends.begin(), host_ends.end(), host_ends.begin()); }
+  std::partial_sum(sizes.begin(), sizes.end(), host_ends.begin());
   // Complete each upload before another allocation can fail and release its host source.
   auto device_starts = cudf::detail::make_device_uvector(host_starts, stream, temp_mr);
   auto device_ends   = cudf::detail::make_device_uvector(host_ends, stream, temp_mr);
-  if (count > 1'024) {
-    thrust::inclusive_scan(policy, device_ends.begin(), device_ends.end(), device_ends.begin());
-  }
   thrust::tabulate(policy,
                    data,
                    data + num_rows,

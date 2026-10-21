@@ -33,10 +33,9 @@ namespace spark_rapids_jni {
  * @brief Expand host-side (start, size) ranges into one owning, non-nullable INT64 column.
  *
  * Ranges retain input order, including gaps, overlaps, or decreasing starts. Zero sizes produce
- * no values. The CPU validates metadata. Cumulative range ends use a CPU scan for at most 1024
- * ranges and a GPU scan otherwise; Thrust writes the final column without
- * per-range device sequences or concatenate. A single range needs no device metadata, and an
- * empty result launches no kernel.
+ * no values. The CPU validates metadata and computes cumulative range ends. Thrust writes the
+ * final column without per-range device sequences or concatenate. A single range needs no device
+ * metadata, and an empty result launches no kernel.
  *
  * Host inputs may be released when this function returns. Output allocations use @p mr; temporary
  * device allocations use the current device resource. All device work uses @p stream. Temporary
