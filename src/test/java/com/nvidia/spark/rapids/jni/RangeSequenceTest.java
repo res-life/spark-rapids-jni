@@ -66,14 +66,27 @@ class RangeSequenceTest {
   }
 
   @Test
+  void moreThan1024Ranges() {
+    long[] starts = new long[1025];
+    int[] sizes = new int[starts.length];
+    for (int i = 0; i < starts.length; i++) {
+      starts[i] = 10L * i;
+      sizes[i] = i % 4;
+    }
+    assertSequence(starts, sizes);
+  }
+
+  @Test
   void randomizedFragmentedRanges() {
-    Random random = new Random(0);
+    long seed = System.currentTimeMillis();
+    System.out.println("RangeSequenceTest.randomizedFragmentedRanges seed: " + seed);
+    Random random = new Random(seed);
     for (int iteration = 0; iteration < 8; iteration++) {
-      int ranges = 1 + random.nextInt(1024);
-      long[] starts = random.longs(ranges, 0, Long.MAX_VALUE - 1024).toArray();
+      int ranges = 1 + random.nextInt(2048);
+      long[] starts = random.longs(ranges, 0, Long.MAX_VALUE - 2048).toArray();
       int[] sizes = new int[ranges];
       for (int i = 0; i < ranges; i++) {
-        sizes[i] = random.nextInt(1024);
+        sizes[i] = random.nextInt(2048);
       }
       assertSequence(starts, sizes);
     }
