@@ -17,12 +17,14 @@
 #include "range_sequence.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/aligned.hpp>
 #include <rmm/cuda_stream.hpp>
+#include <rmm/error.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/limiting_resource_adaptor.hpp>
 
@@ -97,5 +99,30 @@ TEST_F(RangeSequenceTests, InvalidRanges)
   EXPECT_THROW(generate({max}, {2}), std::invalid_argument);
   EXPECT_THROW(generate({0, max - 1}, {0, 3}), std::invalid_argument);
   EXPECT_THROW(generate({0, 0}, {max_rows, 1}), std::overflow_error);
+}
+
+TEST_F(RangeSequenceTests, MetadataAllocationFailures)
+{
+  rmm::cuda_stream stream{rmm::cuda_stream::flags::non_blocking};
+  std::vector<int64_t> const starts{100, 200};
+  std::vector<cudf::size_type> const sizes{3, 2};
+  rmm::mr::limiting_resource_adaptor output_mr{rmm::mr::cuda_async_memory_resource{},
+                                               rmm::CUDA_ALLOCATION_ALIGNMENT};
+  for (std::size_t const successful_allocations : {0, 1}) {
+    SCOPED_TRACE(successful_allocations);
+    // Fail the first upload, or the second after starts have been uploaded.
+    rmm::mr::limiting_resource_adaptor temporary_mr{
+      rmm::mr::cuda_async_memory_resource{},
+      successful_allocations * rmm::CUDA_ALLOCATION_ALIGNMENT};
+    {
+      cudf::test::scoped_current_device_resource current_scope{temporary_mr};
+      EXPECT_THROW(spark_rapids_jni::generate_range_sequence(starts, sizes, stream, output_mr),
+                   rmm::out_of_memory);
+      stream.synchronize();
+    }
+    EXPECT_EQ(temporary_mr.get_allocated_bytes(), 0);
+    EXPECT_EQ(output_mr.get_allocated_bytes(), 0);
+  }
+  assert_sequence(starts, sizes, stream);
 }
 }  // namespace

@@ -41,6 +41,8 @@ namespace spark_rapids_jni {
  * Host inputs may be released when this function returns. Output allocations use @p mr; temporary
  * device allocations use the current device resource. All device work uses @p stream. Temporary
  * device storage is O(starts.size()). Allocation failures propagate to the caller.
+ * This function may synchronize @p stream. For multiple ranges, each metadata upload completes
+ * before its host staging buffer can be released; output generation may still be pending on return.
  *
  * @throws std::invalid_argument if lengths differ, a size is negative, there are more than
  * cudf::size_type's maximum number of ranges, or a generated value exceeds INT64_MAX.

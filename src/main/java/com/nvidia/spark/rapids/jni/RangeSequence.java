@@ -39,6 +39,9 @@ public final class RangeSequence {
    * The GPU writes the output directly into the final column, using O(number of ranges)
    * temporary device memory without materializing and concatenating separate sequences.
    * A single range needs no device metadata allocation. Empty output launches no kernel.
+   * The call may synchronize the CUDA stream. Metadata uploads for multiple ranges complete
+   * before their host staging buffers can be released. Output generation may still be pending
+   * on return.
    *
    * @param starts first value of each sequence; must have the same length as sizes
    * @param sizes nonnegative number of values in each sequence

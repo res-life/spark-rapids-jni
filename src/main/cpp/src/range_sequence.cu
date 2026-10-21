@@ -70,14 +70,15 @@ std::unique_ptr<cudf::column> generate_range_sequence(std::span<int64_t const> s
   }
 
   auto const count = static_cast<cudf::size_type>(sizes.size());
-  // Own the host staging buffers until their stream-ordered deallocation.
+  // Pinned staging may share a pool with CPU users that do not synchronize before writing.
   auto host_starts = cudf::detail::make_pinned_vector_async<int64_t>(count, stream);
   auto host_ends   = cudf::detail::make_pinned_vector_async<cudf::size_type>(count, stream);
   std::copy(starts.begin(), starts.end(), host_starts.begin());
   std::copy(sizes.begin(), sizes.end(), host_ends.begin());
   if (count <= 1'024) { std::partial_sum(host_ends.begin(), host_ends.end(), host_ends.begin()); }
-  auto device_starts = cudf::detail::make_device_uvector_async(host_starts, stream, temp_mr);
-  auto device_ends   = cudf::detail::make_device_uvector_async(host_ends, stream, temp_mr);
+  // Complete each upload before another allocation can fail and release its host source.
+  auto device_starts = cudf::detail::make_device_uvector(host_starts, stream, temp_mr);
+  auto device_ends   = cudf::detail::make_device_uvector(host_ends, stream, temp_mr);
   if (count > 1'024) {
     thrust::inclusive_scan(policy, device_ends.begin(), device_ends.end(), device_ends.begin());
   }
