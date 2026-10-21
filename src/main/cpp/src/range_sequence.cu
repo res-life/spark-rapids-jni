@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "nvtx_ranges.hpp"
 #include "range_sequence.hpp"
 
 #include <cudf/column/column_factories.hpp>
@@ -40,6 +41,7 @@ std::unique_ptr<cudf::column> generate_range_sequence(std::span<int64_t const> s
                                                       cuda::stream_ref stream,
                                                       rmm::device_async_resource_ref mr)
 {
+  SRJ_FUNC_RANGE();
   auto constexpr max_rows = std::numeric_limits<cudf::size_type>::max();
   CUDF_EXPECTS(starts.size() == sizes.size(),
                "starts and sizes must have the same length",
