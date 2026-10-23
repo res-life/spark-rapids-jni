@@ -17,6 +17,7 @@
 package com.nvidia.spark.rapids.jni;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import org.junit.jupiter.api.Assertions;
@@ -39,6 +40,12 @@ import ai.rapids.cudf.HostColumnVector;
 import ai.rapids.cudf.Table;
 
 public class CastStringsTest {
+  private static String repeat(char value, int count) {
+    char[] chars = new char[count];
+    Arrays.fill(chars, value);
+    return new String(chars);
+  }
+
   @Test
   void castToIntegerTest() {
     Table.TestBuilder tb = new Table.TestBuilder();
@@ -346,6 +353,109 @@ public class CastStringsTest {
                      "legacy row " + i + " input=" + legacyInputs[i] +
                      " expected=" + expected + " actual=" + actual +
                      " ulpDiff=" + ulpDiff);
+        }
+      }
+    }
+  }
+
+  // Regression test for https://github.com/NVIDIA/cudf-spark/issues/16466.
+  @Test
+  void castToFloatsExtremeExponentTest() {
+    String cancellingExponent = "1" + repeat('0', 10000) + "e-10000";
+    String invalidBoundarySuffix = "1e" + repeat('0', 29) + "fX";
+    String invalidNonExponentBoundarySuffix = "1" + repeat('0', 30) + "fX";
+    String saturatedExponentWithGarbage = "1e" + repeat('9', 64) + "X";
+    // Place E immediately before and at the end of a 32-character parser window.
+    String fastBoundaryMantissa = repeat('0', 29) + "1";
+    String slowBoundaryMantissa = repeat('0', 30) + "1";
+    // Exercise the complete-in-window fast path and arbitrary-length slow path boundary.
+    String fastExponent = repeat('0', 17) + "1";
+    String slowExponent = repeat('0', 18) + "1";
+    String[] inputs = new String[] {
+        "-630111.628E-58858",
+        "630111.628E58858",
+        "-1E5000",
+        "1E5000",
+        "-1E-5000",
+        "1E-5000",
+        "1e" + fastExponent,
+        "1e" + slowExponent,
+        "1e00000000000000000000000000000000000000001",
+        "-1e-00000000000000000000000000000000000000001",
+        "123456789012345678901234567890E-58858",
+        "1234567890123456789012345678901E-58858",
+        "1e99999999999999999999999999999999" +
+            "999999999999999999999999999999999999",
+        "-1e-99999999999999999999999999999999" +
+            "999999999999999999999999999999999999",
+        "-9007199254740993e-99999999999999999999999999999999" +
+            "999999999999999999999999999999999999",
+        cancellingExponent,
+        fastBoundaryMantissa + "E2",
+        slowBoundaryMantissa + "E2",
+        fastBoundaryMantissa + "E-2",
+        slowBoundaryMantissa + "E-2",
+        "1e" + repeat('0', 29) + "f",
+        "1e" + repeat('0', 29) + "d ",
+        // Check the exact boundary of the early signed-zero shortcut.
+        "9999999999999999999e-342",
+        "-9999999999999999999e-342",
+        "9999999999999999999e-343",
+        "-9999999999999999999e-343",
+        "0e99999",
+        "-0e99999"
+    };
+
+    for (boolean ansiMode : new boolean[] {false, true}) {
+      try (ColumnVector in = ColumnVector.fromStrings(inputs);
+           ColumnVector got = CastStrings.toFloat(in, ansiMode, DType.FLOAT32);
+           HostColumnVector hostGot = got.copyToHost()) {
+        for (int i = 0; i < inputs.length; i++) {
+          assertFalse(hostGot.isNull(i), "float row " + i + " input=" + inputs[i]);
+          float expected = Float.parseFloat(inputs[i]);
+          float actual = hostGot.getFloat(i);
+          assertEquals(Float.floatToRawIntBits(expected),
+              Float.floatToRawIntBits(actual), "float row " + i + " input=" + inputs[i]);
+        }
+      }
+
+      try (ColumnVector in = ColumnVector.fromStrings(inputs);
+           ColumnVector got = CastStrings.toFloat(in, ansiMode, DType.FLOAT64);
+           HostColumnVector hostGot = got.copyToHost()) {
+        for (int i = 0; i < inputs.length; i++) {
+          assertFalse(hostGot.isNull(i), "double row " + i + " input=" + inputs[i]);
+          double expected = Double.parseDouble(inputs[i]);
+          double actual = hostGot.getDouble(i);
+          assertEquals(Double.doubleToRawLongBits(expected),
+              Double.doubleToRawLongBits(actual), "double row " + i + " input=" + inputs[i]);
+        }
+      }
+    }
+
+    String[] invalidInputs = new String[] {
+        invalidBoundarySuffix,
+        invalidNonExponentBoundarySuffix,
+        "1e",
+        "1e+",
+        "1e-",
+        repeat('0', 30) + "1E",
+        repeat('0', 29) + "1E-",
+        saturatedExponentWithGarbage
+    };
+    for (String invalidInput : invalidInputs) {
+      for (DType outputType : new DType[] {DType.FLOAT32, DType.FLOAT64}) {
+        try (ColumnVector in = ColumnVector.fromStrings(invalidInput);
+             ColumnVector got = CastStrings.toFloat(in, false, outputType);
+             HostColumnVector hostGot = got.copyToHost()) {
+          assertTrue(hostGot.isNull(0),
+              "invalid input must be rejected for " + outputType + ": " + invalidInput);
+        }
+        try (ColumnVector in = ColumnVector.fromStrings(invalidInput)) {
+          Assertions.assertThrows(CastException.class, () -> {
+            try (ColumnVector ignored = CastStrings.toFloat(in, true, outputType)) {
+              // The ANSI cast must throw before returning a column.
+            }
+          });
         }
       }
     }
