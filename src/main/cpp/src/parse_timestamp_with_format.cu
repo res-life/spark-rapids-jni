@@ -189,6 +189,17 @@ format_token compile_csv_year(std::string const& format, size_t next, uint8_t wi
   return {TOK_CSV_YEAR, static_cast<uint8_t>(reserved), 4, 19};
 }
 
+format_token compile_extended_timestamp_token(char letter,
+                                              uint8_t width,
+                                              timestamp_format_parse_options options)
+{
+  if (letter == 'S') {
+    return {TOK_FRACTION, 0, static_cast<uint8_t>(options.allow_empty_fraction), width};
+  }
+  CUDF_EXPECTS(width <= 3, "offset pattern must be X, XX or XXX", std::invalid_argument);
+  return {TOK_OFFSET, width, static_cast<uint8_t>(options.allow_offset_seconds), 0};
+}
+
 std::vector<format_token> compile_format(std::string const& fmt,
                                          format_dialect dialect,
                                          timestamp_format_parse_options options = {})
@@ -225,14 +236,7 @@ std::vector<format_token> compile_format(std::string const& fmt,
         throw std::invalid_argument(std::string("pattern letter run too long: ") + c);
       }
       if (c == 'S' || c == 'X') {
-        auto const run = static_cast<uint8_t>(j - i);
-        CUDF_EXPECTS(
-          c != 'X' || run <= 3, "offset pattern must be X, XX or XXX", std::invalid_argument);
-        if (c == 'S') {
-          out.push_back({TOK_FRACTION, 0, static_cast<uint8_t>(options.allow_empty_fraction), run});
-        } else {
-          out.push_back({TOK_OFFSET, run, static_cast<uint8_t>(options.allow_offset_seconds), 0});
-        }
+        out.push_back(compile_extended_timestamp_token(c, static_cast<uint8_t>(j - i), options));
         i = j;
         continue;
       }
