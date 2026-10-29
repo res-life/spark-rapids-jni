@@ -436,8 +436,14 @@ Java_com_nvidia_spark_rapids_jni_CastStrings_parseCsvDate(JNIEnv* env,
   JNI_CATCH(env, 0);
 }
 
-JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_CastStrings_parseTimestampWithFormat(
-  JNIEnv* env, jclass, jlong input_column, jstring j_format, jint time_parser_policy)
+JNIEXPORT jlong JNICALL
+Java_com_nvidia_spark_rapids_jni_CastStrings_parseTimestampWithFormat(JNIEnv* env,
+                                                                      jclass,
+                                                                      jlong input_column,
+                                                                      jstring j_format,
+                                                                      jint time_parser_policy,
+                                                                      jboolean allow_offset_seconds,
+                                                                      jboolean allow_empty_fraction)
 {
   JNI_NULL_CHECK(env, input_column, "input column is null", 0);
   JNI_NULL_CHECK(env, j_format, "format is null", 0);
@@ -457,7 +463,13 @@ JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_CastStrings_parseTimest
     auto const legacy           = time_parser_policy == TIME_PARSER_POLICY_LEGACY;
     auto const exception_policy = time_parser_policy == TIME_PARSER_POLICY_EXCEPTION;
     return cudf::jni::release_as_jlong(spark_rapids_jni::parse_timestamp_strings_with_format(
-      input_view, format, legacy, exception_policy, cudf::get_default_stream()));
+      input_view,
+      format,
+      legacy,
+      exception_policy,
+      {.allow_offset_seconds = static_cast<bool>(allow_offset_seconds),
+       .allow_empty_fraction = static_cast<bool>(allow_empty_fraction)},
+      cudf::get_default_stream()));
   }
   CATCH_CAST_EXCEPTION(env, 0);
 }

@@ -29,6 +29,15 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.format.ResolverStyle;
+import java.time.temporal.ChronoField;
+import java.time.DateTimeException;
+import java.util.Locale;
+import java.math.BigInteger;
 
 import org.junit.jupiter.api.Test;
 
@@ -1866,6 +1875,116 @@ public class CastStringsTest {
         new String[]{"20241231 23:59:58", "20241231T23:59:58"},
         "yyyyMMdd HH:mm:ss", false,
         new Long[]{ts, null});
+  }
+
+  @Test
+  void parseTimestampWithFormat_correctedFractionsAndOffsets() {
+    String[] offsets = {"", "Z", "+08", "+0800", "+0830", "+08:30", "-05:30",
+        "+00", "-0000", "+00:00", "+18:00", "-18:00", "+18:01", "+19:00",
+        "+08:60", "+8:30", "+083", "+08:3", "+08:30:00", "+08:30:01", "+083001",
+        "+000001", "+18:00:01", "-18:00:01", "+08:30:60", "z", "UTC"};
+    for (String separator : new String[]{" ", "'T'"}) {
+      for (String fraction : new String[]{"", ".SSS", ".SSSSSS", ".SSSSSSSSS"}) {
+        for (String offset : new String[]{"", "X", "XX", "XXX"}) {
+          String format = "yyyy-MM-dd" + separator + "HH:mm:ss" + fraction + offset;
+          List<String> inputs = new ArrayList<>();
+          String dateTime = "1969-12-31" + (separator.equals(" ") ? " " : "T") + "23:59:59";
+          for (String digits : new String[]{"", ".", ".1", ".12", ".123", ".1234",
+              ".123456", ".123456789", ".1234567890", ".-1"}) {
+            for (String suffix : offsets) {
+              inputs.add(dateTime + digits + suffix);
+            }
+          }
+          // Calendar/time validity, full consumption, strict separators, and signed years.
+          String suffix = fraction.isEmpty() ? "" : ".123";
+          suffix += offset.isEmpty() ? "" : "Z";
+          for (String date : new String[]{"2024-02-29", "2023-02-29", "0000-01-01",
+              "-0001-01-01", "+10000-01-01", "10000-01-01", "+2024-01-01",
+              "2024-1-01", "2024-01-32"}) {
+            inputs.add(date + (separator.equals(" ") ? " " : "T") + "12:34:56" + suffix);
+          }
+          inputs.add(dateTime + suffix + "tail");
+          inputs.add(" " + dateTime + suffix);
+          inputs.add((dateTime + suffix).toLowerCase(Locale.ROOT));
+          String zone = offset.isEmpty() ? "" : "Z";
+          String literal = separator.equals(" ") ? " " : "T";
+          for (String boundary : new String[]{"+294247-01-10 04:00:54.775",
+              "+294247-01-10 04:00:54.776", "-290308-12-21 19:59:05.224",
+              "-290308-12-21 19:59:05.225"}) {
+            inputs.add(boundary.replace(" ", literal) + zone);
+          }
+          inputs.add("");
+          inputs.add(null);
+          // Existing second-only expressions retain their established four-digit year behavior.
+          if (format.equals("yyyy-MM-dd HH:mm:ss")) {
+            continue;
+          }
+          assertParsedTimestampAgainstJdk(inputs, format);
+        }
+      }
+    }
+  }
+
+  private static void assertParsedTimestampAgainstJdk(List<String> inputs, String format) {
+    // Spark replaces yyyy with proleptic uuuu before building its strict Java formatter.
+    String pattern = format.replace("yyyy", "uuuu");
+    DateTimeFormatterBuilder builder = new DateTimeFormatterBuilder().parseCaseInsensitive();
+    int start = pattern.indexOf('S');
+    if (start < 0) {
+      builder.appendPattern(pattern);
+    } else {
+      int end = start;
+      while (end < pattern.length() && pattern.charAt(end) == 'S') {
+        ++end;
+      }
+      // Spark's DateTimeFormatterHelper accepts 1..N fractional digits, unlike the
+      // fixed width used by DateTimeFormatter.ofPattern under strict resolution.
+      builder.appendPattern(pattern.substring(0, start))
+          .appendFraction(ChronoField.NANO_OF_SECOND, 1, end - start, false)
+          .appendPattern(pattern.substring(end));
+    }
+    DateTimeFormatter formatter = builder.toFormatter(Locale.US)
+        .withResolverStyle(ResolverStyle.STRICT);
+    Long[] expected = inputs.stream().map(input -> {
+      if (input == null) {
+        return null;
+      }
+      try {
+        Instant parsed = format.contains("X")
+            ? OffsetDateTime.parse(input, formatter).toInstant()
+            : LocalDateTime.parse(input, formatter).toInstant(ZoneOffset.UTC);
+        return BigInteger.valueOf(parsed.getEpochSecond()).multiply(BigInteger.valueOf(1_000_000L))
+            .add(BigInteger.valueOf(parsed.getNano() / 1000)).longValueExact();
+      } catch (DateTimeException | ArithmeticException e) {
+        return null;
+      }
+    }).toArray(Long[]::new);
+    try (ColumnVector input = ColumnVector.fromStrings(inputs.toArray(new String[0]));
+        ColumnVector actual = CastStrings.parseTimestampWithFormat(input, format, false);
+        HostColumnVector host = actual.copyToHost()) {
+      for (int i = 0; i < expected.length; ++i) {
+        Long value = host.isNull(i) ? null : host.getLong(i);
+        assertEquals(expected[i], value, format + " input: " + inputs.get(i));
+      }
+    }
+  }
+
+  @Test
+  void parseTimestampWithFormat_extendedTokensRequireCorrected() {
+    try (ColumnVector input = ColumnVector.fromStrings("2024-01-01 00:00:00.123")) {
+      for (int policy : new int[]{CastStrings.TIME_PARSER_POLICY_LEGACY,
+          CastStrings.TIME_PARSER_POLICY_EXCEPTION}) {
+        CudfException error = Assertions.assertThrows(CudfException.class,
+            () -> CastStrings.parseTimestampWithFormat(input, "yyyy-MM-dd HH:mm:ss.SSS", policy));
+        assertEquals(CudfException.class, error.getClass());
+      }
+      for (String format : new String[]{"yyyy-MM-dd'T'HH:mm:ssXXXX",
+          "yyyy-MM-dd'Q'HH:mm:ss", "yyyy-MM-dd HH:mm:ss.SSSSSSSSSS"}) {
+        CudfException error = Assertions.assertThrows(CudfException.class,
+            () -> CastStrings.parseTimestampWithFormat(input, format, false));
+        assertEquals(CudfException.class, error.getClass());
+      }
+    }
   }
 
   @Test
