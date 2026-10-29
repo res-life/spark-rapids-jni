@@ -322,7 +322,7 @@ __device__ bool read_offset(date_parse::cursor<>& input,
   if (minute > 59 || second > 59 || hour > 18 || (hour == 18 && (minute != 0 || second != 0))) {
     return false;
   }
-  offset_seconds = (hour * 3600 + minute * 60 + second) * (negative ? -1 : 1);
+  offset_seconds = (hour * 3'600 + minute * 60 + second) * (negative ? -1 : 1);
   return true;
 }
 
