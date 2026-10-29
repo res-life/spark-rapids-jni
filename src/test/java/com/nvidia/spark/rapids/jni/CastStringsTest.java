@@ -1948,7 +1948,98 @@ public class CastStringsTest {
             minCheckedMicros, minCheckedMicros + 1, Long.MAX_VALUE, null, minCheckedMicros, null});
   }
 
-  private static void assertParsedTimestampAgainstJdk(List<String> inputs, String format) {
+  @Test
+  void parseTimestampWithFormatChecked_timezonesAndBounds() {
+    List<String> localInputs = Arrays.asList(null, "", "malformed",
+        "2023-02-29 12:00:00.123456", "2024-01-01 00:00:00.123456",
+        "1969-12-31 23:59:59.999999", "1965-04-25 01:59:59.999999",
+        "1965-04-25 02:00:00.000000", "2021-03-14 02:30:00.123456",
+        "2021-11-07 01:30:00.123456", "+294247-01-10 04:00:54.775807",
+        "+294247-01-10 04:00:54.775808", "-290308-12-21 19:59:05.225000",
+        "-290308-12-21 19:59:06.000000", "+300001-01-01 00:00:00.000000",
+        "-300001-01-01 00:00:00.000000", "+999999999-01-01 00:00:00.000000",
+        "-999999999-01-01 00:00:00.000000", "+1000000000-01-01 00:00:00.000000",
+        "+999999999-02-29 00:00:00.000000");
+    for (String zone : new String[]{"UTC", "+08:00", "-05:00", "America/New_York"}) {
+      assertParsedTimestampCheckedAgainstJdk(localInputs, "yyyy-MM-dd HH:mm:ss.SSSSSS",
+          ZoneId.of(zone));
+      assertParsedTimestampCheckedAgainstJdk(Arrays.asList(null, "malformed",
+          "2024-01-01T00:00:00.123456+08:30", "2024-01-01T00:00:00.123456Z",
+          "+294247-01-10T12:30:54.775807+08:30",
+          "+294247-01-10T04:00:54.775807-05:00",
+          "-290308-12-21T14:59:06.000000-05:00",
+          "-290308-12-21T19:59:05.225000Z"),
+          "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX", ZoneId.of(zone));
+    }
+    assertParsedTimestampCheckedAgainstJdk(new ArrayList<>(), "yyyy-MM-dd HH:mm:ss.SSS",
+        ZoneOffset.UTC);
+  }
+
+  @Test
+  void parseTimestampWithFormatChecked_overflowInMixedBatch() {
+    String[] inputs = new String[4097];
+    Arrays.fill(inputs, "2024-01-01 00:00:00.123456");
+    inputs[0] = null;
+    inputs[1] = "malformed";
+    inputs[inputs.length - 1] = "+294247-01-10 04:00:54.775808";
+    try (ColumnVector column = ColumnVector.fromStrings(inputs)) {
+      ArithmeticException error = Assertions.assertThrows(ArithmeticException.class, () -> {
+        try (ColumnVector ignored = CastStrings.parseTimestampWithFormatChecked(column,
+            "yyyy-MM-dd HH:mm:ss.SSSSSS", ZoneOffset.UTC)) {
+          // The final row must report overflow even among valid and malformed rows.
+        }
+      });
+      assertEquals(ArithmeticException.class, error.getClass());
+      assertEquals("long overflow", error.getMessage());
+    }
+  }
+
+  private static void assertParsedTimestampCheckedAgainstJdk(List<String> inputs, String format,
+      ZoneId zoneId) {
+    DateTimeFormatter formatter = timestampFormatter(format);
+    List<String> nonOverflowInputs = new ArrayList<>();
+    List<Long> expectedValues = new ArrayList<>();
+    for (String input : inputs) {
+      Long expected = null;
+      try {
+        if (input != null) {
+          Instant parsed = format.contains("X")
+              ? OffsetDateTime.parse(input, formatter).toInstant()
+              : LocalDateTime.parse(input, formatter).atZone(zoneId).toInstant();
+          expected = Math.addExact(Math.multiplyExact(parsed.getEpochSecond(), 1_000_000L),
+              parsed.getNano() / 1000);
+        }
+      } catch (DateTimeException ignored) {
+        // Malformed rows remain null, independently of arithmetic-overflow handling.
+      } catch (ArithmeticException overflow) {
+        try (ColumnVector column = ColumnVector.fromStrings(input)) {
+          ArithmeticException error = Assertions.assertThrows(ArithmeticException.class, () -> {
+            try (ColumnVector ignored =
+                CastStrings.parseTimestampWithFormatChecked(column, format, zoneId)) {
+              // Close an unexpected result before the assertion fails.
+            }
+          });
+          assertEquals(ArithmeticException.class, error.getClass());
+          assertEquals("long overflow", error.getMessage());
+        }
+        continue;
+      }
+      nonOverflowInputs.add(input);
+      expectedValues.add(expected);
+    }
+    try (ColumnVector column = ColumnVector.fromStrings(nonOverflowInputs.toArray(new String[0]));
+        ColumnVector actual = CastStrings.parseTimestampWithFormatChecked(column, format, zoneId);
+        HostColumnVector host = actual.copyToHost()) {
+      assertEquals(expectedValues.size(), host.getRowCount());
+      for (int i = 0; i < expectedValues.size(); ++i) {
+        Long value = host.isNull(i) ? null : host.getLong(i);
+        assertEquals(expectedValues.get(i), value,
+            format + " zone: " + zoneId + " input: " + nonOverflowInputs.get(i));
+      }
+    }
+  }
+
+  private static DateTimeFormatter timestampFormatter(String format) {
     // Spark replaces yyyy with proleptic uuuu before building its strict Java formatter.
     String pattern = format.replace("yyyy", "uuuu");
     DateTimeFormatterBuilder builder = new DateTimeFormatterBuilder().parseCaseInsensitive();
@@ -1966,8 +2057,11 @@ public class CastStringsTest {
           .appendFraction(ChronoField.NANO_OF_SECOND, 1, end - start, false)
           .appendPattern(pattern.substring(end));
     }
-    DateTimeFormatter formatter = builder.toFormatter(Locale.US)
-        .withResolverStyle(ResolverStyle.STRICT);
+    return builder.toFormatter(Locale.US).withResolverStyle(ResolverStyle.STRICT);
+  }
+
+  private static void assertParsedTimestampAgainstJdk(List<String> inputs, String format) {
+    DateTimeFormatter formatter = timestampFormatter(format);
     Long[] expected = inputs.stream().map(input -> {
       if (input == null) {
         return null;

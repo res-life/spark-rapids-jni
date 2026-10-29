@@ -473,4 +473,45 @@ Java_com_nvidia_spark_rapids_jni_CastStrings_parseTimestampWithFormat(JNIEnv* en
   }
   CATCH_CAST_EXCEPTION(env, 0);
 }
+
+JNIEXPORT jlong JNICALL
+Java_com_nvidia_spark_rapids_jni_CastStrings_parseTimestampWithFormatChecked(
+  JNIEnv* env,
+  jclass,
+  jlong input_column,
+  jstring j_format,
+  jboolean allow_offset_seconds,
+  jboolean allow_empty_fraction,
+  jlong timezone_info,
+  jint timezone_index,
+  jint default_offset_seconds)
+{
+  JNI_NULL_CHECK(env, input_column, "input column is null", 0);
+  JNI_NULL_CHECK(env, j_format, "format is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const input_view =
+      cudf::strings_column_view(*std::bit_cast<cudf::column_view const*>(input_column));
+    auto const format_jstr = cudf::jni::native_jstring(env, j_format);
+    auto const format      = std::string(format_jstr.get(), format_jstr.size_bytes());
+    return cudf::jni::release_as_jlong(
+      spark_rapids_jni::parse_timestamp_strings_with_format_checked(
+        input_view,
+        format,
+        {.allow_offset_seconds = static_cast<bool>(allow_offset_seconds),
+         .allow_empty_fraction = static_cast<bool>(allow_empty_fraction)},
+        {.transitions    = std::bit_cast<cudf::table_view const*>(timezone_info),
+         .index          = static_cast<cudf::size_type>(timezone_index),
+         .offset_seconds = static_cast<int32_t>(default_offset_seconds)}));
+  }
+  JNI_CATCH_BEGIN(env, 0)
+  catch (spark_rapids_jni::timestamp_parse_overflow const& e)
+  {
+    JNI_EXCEPTION_OCCURRED_CHECK(env, 0);
+    JNI_THROW_NEW(env, "java/lang/ArithmeticException", e.what(), 0);
+  }
+  CATCH_SPECIAL_EXCEPTION(env, 0)
+  CATCH_STD_EXCEPTION(env, 0)
+}
 }

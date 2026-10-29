@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 
 namespace spark_rapids_jni {
@@ -254,6 +255,18 @@ struct timestamp_format_parse_options {
   bool allow_empty_fraction = false;  ///< Allow zero fraction digits when input remains.
 };
 
+/** @brief A valid formatted timestamp overflows Spark's checked microsecond conversion. */
+struct timestamp_parse_overflow : public std::runtime_error {
+  timestamp_parse_overflow() : std::runtime_error("long overflow") {}
+};
+
+/** @brief Session timezone used before converting parsed seconds to microseconds. */
+struct timestamp_parse_timezone {
+  cudf::table_view const* transitions = nullptr;  ///< Region transitions, or null for fixed offset.
+  cudf::size_type index               = 0;        ///< Region timezone row in the transition table.
+  int32_t offset_seconds              = 0;        ///< Fixed UTC offset when transitions is null.
+};
+
 /**
  * @brief Parse a string column into a `timestamp_us` column for a Spark date/timestamp
  *        format pattern, with optional fractional seconds and an explicit UTC offset.
@@ -308,6 +321,30 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
   timestamp_format_parse_options options = {},
   cuda::stream_ref stream                = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Parse CORRECTED expression timestamps with checked arithmetic after timezone resolution.
+ *
+ * An explicit X/XX/XXX offset overrides the session timezone. Otherwise the session timezone
+ * resolves the local date/time at second precision before multiplying by one million and adding
+ * fractional microseconds. Malformed inputs produce nulls; arithmetic overflow throws.
+ *
+ * @param input The input string column.
+ * @param format Spark format pattern.
+ * @param options Caller-resolved JDK compatibility options.
+ * @param timezone Session timezone; its transition data must outlive the call's stream work.
+ * @param stream Stream on which to operate.
+ * @param mr Memory resource for the returned column.
+ * @throws timestamp_parse_overflow If a valid date/time overflows checked microsecond arithmetic.
+ * @return A UTC timestamp_us column, with nulls for malformed inputs.
+ */
+std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_checked(
+  cudf::strings_column_view const& input,
+  std::string const& format,
+  timestamp_format_parse_options options,
+  timestamp_parse_timezone timezone,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 struct csv_date_parse_options {
   bool enable_fallback;

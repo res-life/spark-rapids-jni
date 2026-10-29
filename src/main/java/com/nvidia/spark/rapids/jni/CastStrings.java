@@ -18,6 +18,7 @@ package com.nvidia.spark.rapids.jni;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.temporal.ChronoField;
@@ -457,6 +458,43 @@ public class CastStrings {
   }
 
   /**
+   * Parse CORRECTED expression timestamps, resolving the timezone before checked arithmetic.
+   *
+   * <p>An explicit X/XX/XXX offset overrides {@code zoneId}. Otherwise local date/time fields
+   * are resolved in {@code zoneId} at second precision, before checked multiplication by one
+   * million and addition of fractional microseconds. Malformed rows produce nulls; valid dates
+   * that overflow that arithmetic throw regardless of the caller's ANSI setting.
+   *
+   * @param input the input string column
+   * @param format Spark format pattern
+   * @param zoneId session timezone used when the pattern has no explicit offset
+   * @return UTC timestamps with nulls for malformed inputs
+   * @throws ArithmeticException if a valid timestamp overflows checked microsecond arithmetic
+   * @throws IllegalArgumentException if the region timezone is absent from the GPU database
+   */
+  public static ColumnVector parseTimestampWithFormatChecked(ColumnView input, String format,
+      ZoneId zoneId) {
+    if (format.indexOf('X') >= 0) {
+      return new ColumnVector(parseTimestampWithFormatChecked(input.getNativeView(), format,
+          OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION, 0, 0, 0));
+    }
+    ZoneId normalized = zoneId.normalized();
+    if (normalized instanceof ZoneOffset) {
+      return new ColumnVector(parseTimestampWithFormatChecked(input.getNativeView(), format,
+          OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION, 0, 0,
+          ((ZoneOffset) normalized).getTotalSeconds()));
+    }
+    Integer timezoneIndex = GpuTimeZoneDB.getIndexToTransitionTable(normalized.getId());
+    if (timezoneIndex == null) {
+      throw new IllegalArgumentException("Timezone is absent from the GPU database: " + zoneId);
+    }
+    try (Table timezoneInfo = GpuTimeZoneDB.getTimezoneInfo()) {
+      return new ColumnVector(parseTimestampWithFormatChecked(input.getNativeView(), format,
+          OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION, timezoneInfo.getNativeView(), timezoneIndex, 0));
+    }
+  }
+
+  /**
    * Parse CORRECTED CSV dates with an optional numeric Spark pattern using yyyy, MM, dd, HH,
    * mm and ss. With an explicit pattern, the first attempt requires exact field widths and
    * complete input consumption without trimming whitespace. The yyyy field supports signed
@@ -538,5 +576,9 @@ public class CastStrings {
   private static native long parseTimestampWithFormat(
       long input, String format, int timeParserPolicy, boolean allowOffsetSeconds,
       boolean allowEmptyFraction);
+
+  private static native long parseTimestampWithFormatChecked(
+      long input, String format, boolean allowOffsetSeconds, boolean allowEmptyFraction,
+      long timezoneInfo, int timezoneIndex, int defaultOffsetSeconds);
 
 }

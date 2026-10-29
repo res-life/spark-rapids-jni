@@ -25,6 +25,7 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/string_view.hpp>
+#include <cudf/table/table_device_view.cuh>
 #include <cudf/transform.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
@@ -39,6 +40,7 @@
 #include <cuda/atomic>
 #include <cuda/std/bit>
 #include <cuda/std/limits>
+#include <cuda/std/optional>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/iterator/counting_iterator.h>
@@ -424,10 +426,40 @@ struct parse_with_format_fn {
   cudf::size_type* first_exception_row;
   bool* validity;
   cudf::timestamp_us* output;
+  int32_t* arithmetic_overflow;
+  cuda::std::optional<cudf::table_device_view> timezone_table;
+  cudf::size_type timezone_index;
+  int32_t default_offset_seconds;
+  bool has_explicit_offset;
 
   // Sets the row's null bit. The output value is left uninitialized — under cuDF's null mask
   // convention, masked-off positions are not read by downstream consumers.
   __device__ void set_invalid(cudf::size_type idx) const { validity[idx] = false; }
+
+  __device__ bool set_overflow() const
+  {
+    if (arithmetic_overflow != nullptr) {
+      cuda::atomic_ref<int32_t, cuda::thread_scope_device>{*arithmetic_overflow}.store(
+        1, cuda::memory_order_relaxed);
+    }
+    return false;
+  }
+
+  __device__ int64_t to_utc_seconds(int64_t seconds, int32_t explicit_offset_seconds) const
+  {
+    if (has_explicit_offset) { return seconds - explicit_offset_seconds; }
+    if (timezone_table) {
+      return convert_timestamp<cudf::timestamp_s>(
+               cudf::timestamp_s{cudf::duration_s{seconds}},
+               cudf::lists_column_device_view{timezone_table->column(0)},
+               cudf::lists_column_device_view{timezone_table->column(1)},
+               timezone_index,
+               true)
+        .time_since_epoch()
+        .count();
+    }
+    return seconds - default_offset_seconds;
+  }
 
   __device__ bool parse(unsigned char const* p,
                         int size,
@@ -446,14 +478,18 @@ struct parse_with_format_fn {
 
     parsed_dt d{};
     if (!walk_tokens(p, pos, end, parse_tokens.data(), static_cast<int>(parse_tokens.size()), d) ||
-        !date_time_utils::is_valid_date_for_timestamp(d.year, d.month, d.day) ||
+        d.year < -999'999'999 || d.year > 999'999'999 ||
+        !date_time_utils::is_valid_month_day(d.year, d.month, d.day) ||
         !date_time_utils::is_valid_time(d.hour, d.minute, d.second, d.microsecond)) {
       return false;
     }
+    // A valid JDK date outside this coarse range cannot be rescued by any UTC offset.
+    // Reject it before the timezone helper's epoch-day conversion, which uses int32 days.
+    if (d.year < -300'000 || d.year > 300'000) { return set_overflow(); }
 
     int64_t const days = date_time_utils::to_epoch_day(d.year, d.month, d.day);
     int64_t const seconds =
-      days * 86400L + d.hour * 3600L + d.minute * 60L + d.second - d.offset_seconds;
+      to_utc_seconds(days * 86400L + d.hour * 3600L + d.minute * 60L + d.second, d.offset_seconds);
     // Match Spark's checked seconds-to-microseconds multiplication before adding the fraction.
     constexpr int64_t micros_per_second = 1'000'000;
     constexpr auto min                  = cuda::std::numeric_limits<int64_t>::min();
@@ -461,7 +497,7 @@ struct parse_with_format_fn {
     constexpr auto min_seconds          = min / micros_per_second;
     if (seconds < min_seconds || seconds > max / micros_per_second ||
         (seconds == max / micros_per_second && d.microsecond > max % micros_per_second)) {
-      return false;
+      return set_overflow();
     }
     int64_t const result_us = seconds * micros_per_second + d.microsecond;
     parsed                  = cudf::timestamp_us{cudf::duration_us{result_us}};
@@ -546,16 +582,19 @@ std::unique_ptr<cudf::column> parse_csv_date_strings(cudf::strings_column_view c
     mr);
 }
 
-std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
+namespace {
+
+std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_impl(
   cudf::strings_column_view const& input,
   std::string const& format,
   bool legacy,
   bool exception_policy,
   timestamp_format_parse_options options,
+  timestamp_parse_timezone timezone,
+  bool check_overflow,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
-  SRJ_FUNC_RANGE();
   CUDF_EXPECTS(!(legacy && exception_policy),
                "LEGACY and EXCEPTION policies cannot both be enabled",
                std::invalid_argument);
@@ -573,7 +612,26 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
     return cudf::make_empty_column(cudf::data_type{cudf::type_to_id<cudf::timestamp_us>()});
   }
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr             = cudf::get_current_device_resource_ref();
+  bool const has_explicit_offset = format.find('X') != std::string::npos;
+  bool const use_region_timezone = timezone.transitions != nullptr && !has_explicit_offset;
+  if (use_region_timezone) {
+    CUDF_EXPECTS(timezone.transitions->num_columns() == 2, "timezone table must have two columns");
+    CUDF_EXPECTS(timezone.transitions->column(0).type().id() == cudf::type_id::LIST &&
+                   timezone.transitions->column(1).type().id() == cudf::type_id::LIST,
+                 "timezone table columns must be LIST columns");
+    CUDF_EXPECTS(timezone.index >= 0 && timezone.index < timezone.transitions->num_rows(),
+                 "timezone index is out of range");
+  }
+  auto const d_timezone =
+    use_region_timezone ? cudf::table_device_view::create(*timezone.transitions, stream, temp_mr)
+                        : nullptr;
+  cuda::std::optional<cudf::table_device_view> timezone_table;
+  if (d_timezone) { timezone_table = *d_timezone; }
+  std::unique_ptr<rmm::device_scalar<int32_t>> arithmetic_overflow;
+  if (check_overflow) {
+    arithmetic_overflow = std::make_unique<rmm::device_scalar<int32_t>>(0, stream, temp_mr);
+  }
   auto host_token_staging =
     cudf::detail::make_pinned_vector_async<format_token>(host_tokens.size(), stream);
   std::copy(host_tokens.begin(), host_tokens.end(), host_token_staging.begin());
@@ -616,7 +674,12 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
                                             device_legacy_tokens.size()},
       first_exception_row ? first_exception_row->data() : nullptr,
       validity.begin(),
-      result->mutable_view().begin<cudf::timestamp_us>()});
+      result->mutable_view().begin<cudf::timestamp_us>(),
+      arithmetic_overflow ? arithmetic_overflow->data() : nullptr,
+      timezone_table,
+      timezone.index,
+      timezone.offset_seconds,
+      has_explicit_offset});
 
   if (first_exception_row) {
     // value(stream) synchronizes the stream before returning the device value to the host.
@@ -631,8 +694,41 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
   auto [output_bitmask, null_count] =
     cudf::bools_to_mask(cudf::device_span<bool const>(validity), stream, mr);
   if (null_count) { result->set_null_mask(std::move(*output_bitmask), null_count); }
+  // Overflow always marks a row invalid; a fully valid batch needs no flag readback.
+  if (arithmetic_overflow && null_count != 0 && arithmetic_overflow->value(stream) != 0) {
+    throw timestamp_parse_overflow{};
+  }
 
   return result;
+}
+
+}  // namespace
+
+std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
+  cudf::strings_column_view const& input,
+  std::string const& format,
+  bool legacy,
+  bool exception_policy,
+  timestamp_format_parse_options options,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  SRJ_FUNC_RANGE();
+  return parse_timestamp_strings_with_format_impl(
+    input, format, legacy, exception_policy, options, {}, false, stream, mr);
+}
+
+std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_checked(
+  cudf::strings_column_view const& input,
+  std::string const& format,
+  timestamp_format_parse_options options,
+  timestamp_parse_timezone timezone,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  SRJ_FUNC_RANGE();
+  return parse_timestamp_strings_with_format_impl(
+    input, format, false, false, options, timezone, true, stream, mr);
 }
 
 }  // namespace spark_rapids_jni
