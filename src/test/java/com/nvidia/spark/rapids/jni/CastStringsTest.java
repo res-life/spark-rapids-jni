@@ -1994,13 +1994,24 @@ public class CastStringsTest {
 
   @Test
   void parseTimestampWithFormat_extendedTokensRequireCorrected() {
-    try (ColumnVector input = ColumnVector.fromStrings("2024-01-01 00:00:00.123")) {
-      for (int policy : new int[]{CastStrings.TIME_PARSER_POLICY_LEGACY,
-          CastStrings.TIME_PARSER_POLICY_EXCEPTION}) {
-        CudfException error = Assertions.assertThrows(CudfException.class,
-            () -> CastStrings.parseTimestampWithFormat(input, "yyyy-MM-dd HH:mm:ss.SSS", policy));
-        assertEquals(CudfException.class, error.getClass());
+    for (String[] sample : new String[][]{
+        {"2024-01-01 00:00:00.123", "yyyy-MM-dd HH:mm:ss.SSS"},
+        {"2024-01-01 00:00:00Z", "yyyy-MM-dd HH:mm:ssXXX"},
+        {"2024-01-01T00:00:00", "yyyy-MM-dd'T'HH:mm:ss"}}) {
+      try (ColumnVector input = ColumnVector.fromStrings(sample[0])) {
+        for (int policy : new int[]{CastStrings.TIME_PARSER_POLICY_LEGACY,
+            CastStrings.TIME_PARSER_POLICY_EXCEPTION}) {
+          CudfException error = Assertions.assertThrows(CudfException.class, () -> {
+            try (ColumnVector ignored = CastStrings.parseTimestampWithFormat(input, sample[1],
+                policy)) {
+              // Close an unexpected successful result before assertThrows reports a failure.
+            }
+          });
+          assertEquals(CudfException.class, error.getClass());
+        }
       }
+    }
+    try (ColumnVector input = ColumnVector.fromStrings("2024-01-01 00:00:00.123")) {
       for (String format : new String[]{"yyyy-MM-dd'T'HH:mm:ssXXXX",
           "yyyy-MM-dd'Q'HH:mm:ss", "yyyy-MM-dd HH:mm:ss.SSSSSSSSSS"}) {
         CudfException error = Assertions.assertThrows(CudfException.class,
