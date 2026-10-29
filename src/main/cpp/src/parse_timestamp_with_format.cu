@@ -630,7 +630,8 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_impl(
   if (d_timezone) { timezone_table = *d_timezone; }
   std::unique_ptr<rmm::device_scalar<int32_t>> arithmetic_overflow;
   if (check_overflow) {
-    arithmetic_overflow = std::make_unique<rmm::device_scalar<int32_t>>(0, stream, temp_mr);
+    arithmetic_overflow = std::make_unique<rmm::device_scalar<int32_t>>(stream, temp_mr);
+    arithmetic_overflow->set_value_to_zero_async(stream);
   }
   auto host_token_staging =
     cudf::detail::make_pinned_vector_async<format_token>(host_tokens.size(), stream);
