@@ -464,6 +464,7 @@ public class CastStrings {
    * are resolved in {@code zoneId} at second precision, before checked multiplication by one
    * million and addition of fractional microseconds. Malformed rows produce nulls; valid dates
    * that overflow that arithmetic throw regardless of the caller's ANSI setting.
+   * The timezone database is initialized on demand only for region timezones.
    *
    * @param input the input string column
    * @param format Spark format pattern
@@ -484,6 +485,7 @@ public class CastStrings {
           OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION, 0, 0,
           ((ZoneOffset) normalized).getTotalSeconds()));
     }
+    GpuTimeZoneDB.cacheDatabase();
     Integer timezoneIndex = GpuTimeZoneDB.getIndexToTransitionTable(normalized.getId());
     if (timezoneIndex == null) {
       throw new IllegalArgumentException("Timezone is absent from the GPU database: " + zoneId);
