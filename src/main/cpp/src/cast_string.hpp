@@ -244,9 +244,14 @@ std::unique_ptr<cudf::column> parse_strings_to_date(
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
+/**
+ * @brief Caller-resolved JDK compatibility options for timestamp formats.
+ *
+ * Both options default to false.
+ */
 struct timestamp_format_parse_options {
-  bool allow_offset_seconds = false;
-  bool allow_empty_fraction = false;
+  bool allow_offset_seconds = false;  ///< Accept optional seconds for XX/XXX offsets only.
+  bool allow_empty_fraction = false;  ///< Allow zero fraction digits when input remains.
 };
 
 /**
@@ -267,9 +272,10 @@ struct timestamp_format_parse_options {
  * input; 'T' is rejected as the date/time separator under both policies (unlike
  * the format-less cast). CORRECTED additionally supports the quoted literal
  * `'T'`, fractional seconds (`S` through nine `S`s), and offsets `X`, `XX`,
- * `XXX`. Fractions accept 1 to the specified number of digits, truncated to
- * microseconds. X permits optional minutes, XX requires minutes without a
- * colon, and XXX requires a colon. All accept Z for zero offset. These
+ * `XXX`. By default, fractions accept 1 to the specified number of digits,
+ * truncated to microseconds. Compatibility options may relax the minimum width
+ * and permit offset seconds. X permits optional minutes, XX requires minutes
+ * without a colon, and XXX requires a colon. All accept Z for zero offset. These
  * additional tokens require CORRECTED (not EXCEPTION) policy. With an offset
  * token, the result is already UTC and must not be rebased by the caller.
  * Pattern literals must be ASCII. In LEGACY
