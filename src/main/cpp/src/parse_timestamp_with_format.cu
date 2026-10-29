@@ -450,19 +450,16 @@ struct parse_with_format_fn {
     int64_t const days = date_time_utils::to_epoch_day(d.year, d.month, d.day);
     int64_t const seconds =
       days * 86400L + d.hour * 3600L + d.minute * 60L + d.second - d.offset_seconds;
-    // Check before multiplying, including the partial second at INT64_MIN.
+    // Match Spark's checked seconds-to-microseconds multiplication before adding the fraction.
     constexpr int64_t micros_per_second = 1'000'000;
     constexpr auto min                  = cuda::std::numeric_limits<int64_t>::min();
     constexpr auto max                  = cuda::std::numeric_limits<int64_t>::max();
-    constexpr auto min_seconds          = min / micros_per_second - 1;
-    constexpr auto min_fraction         = min % micros_per_second + micros_per_second;
+    constexpr auto min_seconds          = min / micros_per_second;
     if (seconds < min_seconds || seconds > max / micros_per_second ||
-        (seconds == min_seconds && d.microsecond < min_fraction) ||
         (seconds == max / micros_per_second && d.microsecond > max % micros_per_second)) {
       return false;
     }
-    int64_t const result_us = seconds == min_seconds ? min + (d.microsecond - min_fraction)
-                                                     : seconds * micros_per_second + d.microsecond;
+    int64_t const result_us = seconds * micros_per_second + d.microsecond;
     parsed                  = cudf::timestamp_us{cudf::duration_us{result_us}};
     return true;
   }

@@ -37,7 +37,6 @@ import java.time.format.ResolverStyle;
 import java.time.temporal.ChronoField;
 import java.time.DateTimeException;
 import java.util.Locale;
-import java.math.BigInteger;
 
 import org.junit.jupiter.api.Test;
 
@@ -1953,8 +1952,8 @@ public class CastStringsTest {
         Instant parsed = format.contains("X")
             ? OffsetDateTime.parse(input, formatter).toInstant()
             : LocalDateTime.parse(input, formatter).toInstant(ZoneOffset.UTC);
-        return BigInteger.valueOf(parsed.getEpochSecond()).multiply(BigInteger.valueOf(1_000_000L))
-            .add(BigInteger.valueOf(parsed.getNano() / 1000)).longValueExact();
+        return Math.addExact(Math.multiplyExact(parsed.getEpochSecond(), 1_000_000L),
+            parsed.getNano() / 1000);
       } catch (DateTimeException | ArithmeticException e) {
         return null;
       }
