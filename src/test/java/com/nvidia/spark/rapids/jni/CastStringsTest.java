@@ -1924,6 +1924,30 @@ public class CastStringsTest {
     }
   }
 
+  @Test
+  void parseTimestampWithFormat_exactMicrosecondBoundsAndOffsets() {
+    // Spark checks epoch seconds * 1_000_000 before adding the fractional microseconds.
+    long minCheckedMicros = -9_223_372_036_854_000_000L;
+    assertParsedTimestamp(
+        new String[]{
+            "+294247-01-10T04:00:54.775806Z",
+            "+294247-01-10T04:00:54.775807Z",
+            "+294247-01-10T04:00:54.775808Z",
+            "-290308-12-21T19:59:05.224191Z",
+            "-290308-12-21T19:59:05.224192Z",
+            "-290308-12-21T19:59:05.224193Z",
+            "-290308-12-21T19:59:05.999999Z",
+            "-290308-12-21T19:59:06.000000Z",
+            "-290308-12-21T19:59:06.000001Z",
+            "+294247-01-10T05:00:54.775807+01:00",
+            "+294247-01-10T04:00:54.775807-01:00",
+            "-290308-12-21T18:59:06.000000-01:00",
+            "-290308-12-21T19:59:06.000000+01:00"},
+        "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX", false,
+        new Long[]{Long.MAX_VALUE - 1, Long.MAX_VALUE, null, null, null, null, null,
+            minCheckedMicros, minCheckedMicros + 1, Long.MAX_VALUE, null, minCheckedMicros, null});
+  }
+
   private static void assertParsedTimestampAgainstJdk(List<String> inputs, String format) {
     // Spark replaces yyyy with proleptic uuuu before building its strict Java formatter.
     String pattern = format.replace("yyyy", "uuuu");
