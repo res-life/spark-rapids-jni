@@ -483,6 +483,7 @@ public class CastStrings {
    * @return UTC timestamps with nulls for malformed inputs
    * @throws ArithmeticException if a valid timestamp overflows checked microsecond arithmetic
    * @throws IllegalArgumentException if the region timezone is absent from the GPU database
+   * @throws ai.rapids.cudf.CudfException if the format is unsupported
    */
   public static ColumnVector parseTimestampWithFormatChecked(ColumnView input, String format,
       ZoneId zoneId) {
