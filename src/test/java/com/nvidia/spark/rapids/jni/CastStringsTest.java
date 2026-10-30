@@ -1925,6 +1925,33 @@ public class CastStringsTest {
   }
 
   @Test
+  void parseTimestampWithFormat_repeatedFractionsAndOffsets() {
+    for (int width : new int[]{3, 9}) {
+      String fraction = repeat('S', width);
+      String format = "yyyy-MM-dd HH:mm:ss." + fraction + "/" + fraction;
+      List<String> inputs = Arrays.asList(
+          "2024-01-01 00:00:00.123/123", "2024-01-01 00:00:00.123/456",
+          "2024-01-01 00:00:00.123/123000", "2024-01-01 00:00:00.000/0",
+          "2024-01-01 00:00:00.1234567/1234567",
+          "2024-01-01 00:00:00.1234567/1234568",
+          "2024-01-01 00:00:00.123456789/1234567890", "", null);
+      assertParsedTimestampAgainstJdk(inputs, format);
+      assertParsedTimestampCheckedAgainstJdk(inputs, format, ZoneOffset.UTC);
+    }
+    for (String[] offset : new String[][]{
+        {"X", "+01", "+02", "+00"}, {"XX", "+0100", "+0200", "+0000"},
+        {"XXX", "+01:00", "+02:00", "+00:00"}}) {
+      String format = "yyyy-MM-dd HH:mm:ss" + offset[0] + " " + offset[0];
+      String prefix = "2024-01-01 00:00:00";
+      List<String> inputs = Arrays.asList(
+          prefix + offset[1] + " " + offset[1], prefix + offset[1] + " " + offset[2],
+          prefix + "Z " + offset[3], prefix + offset[3] + " Z", prefix + "Z Z", "", null);
+      assertParsedTimestampAgainstJdk(inputs, format);
+      assertParsedTimestampCheckedAgainstJdk(inputs, format, ZoneId.of("America/New_York"));
+    }
+  }
+
+  @Test
   void parseTimestampWithFormat_correctedPackedFractions() {
     for (String fraction : new String[]{"S", "SS", "SSS"}) {
       for (String separator : new String[]{"", "."}) {
@@ -2083,20 +2110,20 @@ public class CastStringsTest {
     // Spark replaces yyyy with proleptic uuuu before building its strict Java formatter.
     String pattern = format.replace("yyyy", "uuuu");
     DateTimeFormatterBuilder builder = new DateTimeFormatterBuilder().parseCaseInsensitive();
-    int start = pattern.indexOf('S');
-    if (start < 0) {
-      builder.appendPattern(pattern);
-    } else {
+    int previousEnd = 0;
+    for (int start = pattern.indexOf('S'); start >= 0;
+        start = pattern.indexOf('S', previousEnd)) {
       int end = start;
       while (end < pattern.length() && pattern.charAt(end) == 'S') {
         ++end;
       }
       // Spark's DateTimeFormatterHelper accepts 1..N fractional digits, unlike the
       // fixed width used by DateTimeFormatter.ofPattern under strict resolution.
-      builder.appendPattern(pattern.substring(0, start))
-          .appendFraction(ChronoField.NANO_OF_SECOND, 1, end - start, false)
-          .appendPattern(pattern.substring(end));
+      builder.appendPattern(pattern.substring(previousEnd, start))
+          .appendFraction(ChronoField.NANO_OF_SECOND, 1, end - start, false);
+      previousEnd = end;
     }
+    builder.appendPattern(pattern.substring(previousEnd));
     return builder.toFormatter(Locale.US).withResolverStyle(ResolverStyle.STRICT);
   }
 

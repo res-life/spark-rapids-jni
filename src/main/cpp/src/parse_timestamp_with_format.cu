@@ -378,8 +378,9 @@ __device__ bool walk_tokens(unsigned char const* p,
                             parsed_dt& d)
 {
   date_parse::cursor<> input{p, pos, end};
-  // CSV rejects conflicting repetitions; expression specializations keep last-value semantics.
+  // CSV checks numeric repetitions; the new fraction and offset tokens always reject conflicts.
   uint8_t seen_fields = 0;
+  int fraction_nanos  = 0;
   for (int i = 0; i < num_tokens; ++i) {
     auto const& t = tokens[i];
     bool ok       = true;
@@ -402,16 +403,20 @@ __device__ bool walk_tokens(unsigned char const* p,
         // Older JDKs accept zero digits when another character follows, but still
         // reject an empty fraction at EOF. The following tokens validate that tail.
         ok = digits > 0 || (t.b && !input.eof());
-        for (; digits > 6; --digits) {
-          fraction /= 10;
-        }
-        for (; digits > 0 && digits < 6; ++digits) {
+        for (; digits < 9; ++digits) {
           fraction *= 10;
         }
-        d.microsecond = fraction;
+        // Compare before truncation: distinct nanosecond values may have identical microseconds.
+        ok = ok && store_field_value<true>(fraction_nanos, fraction, 1 << 6, seen_fields);
+        d.microsecond = fraction_nanos / 1'000;
         break;
       }
-      case TOK_OFFSET: ok = read_offset(input, t.a, t.b, d.offset_seconds); break;
+      case TOK_OFFSET: {
+        int offset = 0;
+        ok         = read_offset(input, t.a, t.b, offset) &&
+             store_field_value<true>(d.offset_seconds, offset, 1 << 7, seen_fields);
+        break;
+      }
       case TOK_LITERAL: ok = input.consume(t.a) || (t.a == 'T' && input.consume('t')); break;
       case TOK_SKIP_HT_WS:
         while (input.peek() == ' ' || input.peek() == '\t') {
