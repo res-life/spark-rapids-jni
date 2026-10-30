@@ -396,7 +396,8 @@ TEST_F(ParseTimestampWithFormatTests, RejectsConflictingPolicies)
   auto const strings = test::strings_column_wrapper{"2024-05-06"};
   strings_column_view scv{strings};
 
-  EXPECT_THROW(spark_rapids_jni::parse_timestamp_strings_with_format(scv, "yyyy-MM-dd", true, true),
+  EXPECT_THROW(static_cast<void>(spark_rapids_jni::parse_timestamp_strings_with_format(
+                 scv, "yyyy-MM-dd", true, true)),
                std::invalid_argument);
 }
 
