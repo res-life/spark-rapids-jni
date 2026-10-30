@@ -2043,6 +2043,23 @@ public class CastStringsTest {
   }
 
   @Test
+  void parseTimestampWithFormatChecked_coldTimezoneCache() {
+    synchronized (GpuTimeZoneDB.class) {
+      GpuTimeZoneDB.shutdown();
+      try {
+        assertParsedTimestampCheckedAgainstJdk(Arrays.asList(
+            "2024-01-01 00:00:00.123", "2021-03-14 02:30:00.123",
+            "2021-11-07 01:30:00.123"),
+            "yyyy-MM-dd HH:mm:ss.SSS", ZoneId.of("America/New_York"));
+      } finally {
+        // Leave a valid cache for other tests even when the cold-cache assertion fails.
+        GpuTimeZoneDB.shutdown();
+        GpuTimeZoneDB.cacheDatabase();
+      }
+    }
+  }
+
+  @Test
   void parseTimestampWithFormatChecked_selectedTimezoneRow() {
     GpuTimeZoneDB.cacheDatabase();
     for (String zone : new String[]{"America/New_York", "Europe/Paris", "Asia/Kathmandu"}) {
