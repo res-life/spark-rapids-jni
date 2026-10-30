@@ -1925,6 +1925,26 @@ public class CastStringsTest {
   }
 
   @Test
+  void parseTimestampWithFormat_correctedPackedOffsets() {
+    for (String[] offset : new String[][]{
+        {"X", "+08", "-0530", "+19"},
+        {"XX", "+0830", "-0530", "+1900"},
+        {"XXX", "+08:00", "-05:30", "+19:00"}}) {
+      String format = "yyyyMMddHHmmss" + offset[0];
+      List<String> inputs = Arrays.asList(
+          "20240102030405Z", "20240102030405" + offset[1],
+          "20240102030405" + offset[2],
+          "00000102030405Z", "-00010102030405Z", "+100000102030405Z",
+          // Each malformed row isolates an invalid year, date, or offset.
+          "+20240102030405Z", "100000102030405Z", "-00000102030405Z",
+          "20241302030405Z", "20240102030405" + offset[3],
+          "20240102030405+", "20240102030405", "20240102030405Ztail", "", null);
+      assertParsedTimestampAgainstJdk(inputs, format);
+      assertParsedTimestampCheckedAgainstJdk(inputs, format, ZoneOffset.UTC);
+    }
+  }
+
+  @Test
   void parseTimestampWithFormat_exactMicrosecondBoundsAndOffsets() {
     // Spark checks epoch seconds * 1_000_000 before adding the fractional microseconds.
     long minCheckedMicros = -9_223_372_036_854_000_000L;

@@ -179,8 +179,9 @@ format_token compile_csv_year(std::string const& format, size_t next, uint8_t wi
   size_t reserved = 0;
   // Reserve following fixed-width numeric fields, as DateTimeFormatter's adjacent-value parser
   // does. This handles packed formats through the same tokens as separated numeric formats.
+  // An offset begins with a sign or Z, so it ends the adjacent digit run.
   while (next < format.size() && std::isalpha(static_cast<unsigned char>(format[next])) &&
-         format[next] != 'y') {
+         format[next] != 'y' && format[next] != 'X') {
     auto const letter = format[next];
     do {
       ++reserved;
