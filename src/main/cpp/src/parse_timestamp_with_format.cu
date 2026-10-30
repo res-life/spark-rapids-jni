@@ -112,7 +112,7 @@ struct parsed_dt {
 enum tok_kind : uint8_t {
   TOK_DIGITS,  // a = field, b = min_digits, c = max_digits
   // STRICT DateTimeFormatter year with SignStyle.EXCEEDS_PAD.
-  TOK_CSV_YEAR,         // a = reserved adjacent digits, b = min_digits, c = max_digits
+  TOK_STRICT_YEAR,      // a = reserved adjacent digits, b = min_digits, c = max_digits
   TOK_FRACTION,         // b = allow empty fraction, c = max digits (1-9), converted to microseconds
   TOK_OFFSET,           // a = X run length (1-3), b = allow optional offset seconds
   TOK_LITERAL,          // a = literal char
@@ -185,12 +185,12 @@ format_dialect dialect_for(timestamp_parse_mode mode)
   }
 }
 
-format_token compile_csv_year(std::string const& format,
-                              size_t next,
-                              uint8_t width,
-                              timestamp_format_parse_options options)
+format_token compile_strict_year(std::string const& format,
+                                 size_t next,
+                                 uint8_t width,
+                                 timestamp_format_parse_options options)
 {
-  CUDF_EXPECTS(width == 4, "CSV date year pattern must be yyyy", std::invalid_argument);
+  CUDF_EXPECTS(width == 4, "strict year pattern must be yyyy", std::invalid_argument);
   size_t reserved = 0;
   // Reserve following fixed-width numeric fields, as DateTimeFormatter's adjacent-value parser
   // does. This handles packed formats through the same tokens as separated numeric formats.
@@ -208,8 +208,8 @@ format_token compile_csv_year(std::string const& format,
       ++next;
     } while (next < format.size() && format[next] == letter);
   }
-  CUDF_EXPECTS(reserved <= 255, "too many adjacent date digits", std::invalid_argument);
-  return {TOK_CSV_YEAR, static_cast<uint8_t>(reserved), 4, 19};
+  CUDF_EXPECTS(reserved <= 255, "too many adjacent datetime digits", std::invalid_argument);
+  return {TOK_STRICT_YEAR, static_cast<uint8_t>(reserved), 4, 19};
 }
 
 format_token compile_extended_timestamp_token(char letter,
@@ -278,7 +278,7 @@ std::vector<format_token> compile_format(std::string const& fmt,
       bool const abuts_prev_field = (i > 0 && std::isalpha(static_cast<unsigned char>(fmt[i - 1])));
       if (legacy && !abuts_prev_field) { out.push_back({TOK_SKIP_HT_WS, 0, 0, 0}); }
       if ((csv_date || extended_timestamp) && c == 'y') {
-        out.push_back(compile_csv_year(fmt, j, run, options));
+        out.push_back(compile_strict_year(fmt, j, run, options));
       } else {
         out.push_back({TOK_DIGITS, letter_to_field(c), min_d, max_d});
       }
@@ -301,7 +301,7 @@ std::vector<format_token> compile_format(std::string const& fmt,
 
 // ---- Device-side: per-row walker over the compiled token stream. --------------------------------
 
-__device__ bool read_csv_year(date_parse::cursor<>& input, format_token token, int& year)
+__device__ bool read_strict_year(date_parse::cursor<>& input, format_token token, int& year)
 {
   bool const negative = input.consume('-');
   bool const positive = !negative && input.consume('+');
@@ -397,9 +397,9 @@ __device__ bool walk_tokens(unsigned char const* p,
     auto const& t = tokens[i];
     bool ok       = true;
     switch (t.kind) {
-      case TOK_CSV_YEAR: {
+      case TOK_STRICT_YEAR: {
         int year = 0;
-        ok       = read_csv_year(input, t, year) &&
+        ok       = read_strict_year(input, t, year) &&
              store_field<CheckConflicts>(d, FLD_YEAR, year, seen_fields);
         break;
       }
