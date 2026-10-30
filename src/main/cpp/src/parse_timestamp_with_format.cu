@@ -733,6 +733,18 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
     input, format, legacy, exception_policy, options, {}, false, stream, mr);
 }
 
+std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
+  cudf::strings_column_view const& input,
+  std::string const& format,
+  bool legacy,
+  bool exception_policy,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  return parse_timestamp_strings_with_format(
+    input, format, legacy, exception_policy, {}, stream, mr);
+}
+
 std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_checked(
   cudf::strings_column_view const& input,
   std::string const& format,

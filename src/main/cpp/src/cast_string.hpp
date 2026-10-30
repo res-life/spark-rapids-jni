@@ -319,9 +319,22 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
   std::string const& format,
   bool legacy,
   bool exception_policy,
-  timestamp_format_parse_options options = {},
-  cuda::stream_ref stream                = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
+  timestamp_format_parse_options options,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Compatibility overload using default timestamp format options.
+ *
+ * Retains the original explicit-stream and memory-resource call signatures.
+ */
+std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
+  cudf::strings_column_view const& input,
+  std::string const& format,
+  bool legacy,
+  bool exception_policy,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Parse CORRECTED expression timestamps with checked arithmetic after timezone resolution.
