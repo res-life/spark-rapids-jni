@@ -173,16 +173,24 @@ enum class format_dialect {
   csv_date
 };
 
-format_token compile_csv_year(std::string const& format, size_t next, uint8_t width)
+format_token compile_csv_year(std::string const& format,
+                              size_t next,
+                              uint8_t width,
+                              timestamp_format_parse_options options)
 {
   CUDF_EXPECTS(width == 4, "CSV date year pattern must be yyyy", std::invalid_argument);
   size_t reserved = 0;
   // Reserve following fixed-width numeric fields, as DateTimeFormatter's adjacent-value parser
   // does. This handles packed formats through the same tokens as separated numeric formats.
-  // An offset begins with a sign or Z, so it ends the adjacent digit run.
+  // Offsets and variable-width fractions end the adjacent digit run. A single S
+  // participates only on JDKs whose formatter supports fixed-width fraction adjacency.
   while (next < format.size() && std::isalpha(static_cast<unsigned char>(format[next])) &&
          format[next] != 'y' && format[next] != 'X') {
     auto const letter = format[next];
+    if (letter == 'S' && (!options.adjacent_single_fraction ||
+                          (next + 1 < format.size() && format[next + 1] == 'S'))) {
+      break;
+    }
     do {
       ++reserved;
       ++next;
@@ -258,7 +266,7 @@ std::vector<format_token> compile_format(std::string const& fmt,
       bool const abuts_prev_field = (i > 0 && std::isalpha(static_cast<unsigned char>(fmt[i - 1])));
       if (legacy && !abuts_prev_field) { out.push_back({TOK_SKIP_HT_WS, 0, 0, 0}); }
       if ((csv_date || extended_timestamp) && c == 'y') {
-        out.push_back(compile_csv_year(fmt, j, run));
+        out.push_back(compile_csv_year(fmt, j, run, options));
       } else {
         out.push_back({TOK_DIGITS, letter_to_field(c), min_d, max_d});
       }

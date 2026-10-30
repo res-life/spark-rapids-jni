@@ -1925,6 +1925,26 @@ public class CastStringsTest {
   }
 
   @Test
+  void parseTimestampWithFormat_correctedPackedFractions() {
+    for (String fraction : new String[]{"S", "SS", "SSS"}) {
+      for (String separator : new String[]{"", "."}) {
+        for (String offset : new String[]{"", "XXX"}) {
+          String format = "yyyyMMddHHmmss" + separator + fraction + offset;
+          String suffix = offset.isEmpty() ? "" : "Z";
+          List<String> inputs = new ArrayList<>();
+          for (String digits : new String[]{"", "1", "12", "123", "1234"}) {
+            inputs.add("20240102030405" + separator + digits + suffix);
+          }
+          inputs.add("");
+          inputs.add(null);
+          assertParsedTimestampAgainstJdk(inputs, format);
+          assertParsedTimestampCheckedAgainstJdk(inputs, format, ZoneOffset.UTC);
+        }
+      }
+    }
+  }
+
+  @Test
   void parseTimestampWithFormat_correctedPackedOffsets() {
     for (String[] offset : new String[][]{
         {"X", "+08", "-0530", "+19"},

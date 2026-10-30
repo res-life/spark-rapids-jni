@@ -436,14 +436,15 @@ Java_com_nvidia_spark_rapids_jni_CastStrings_parseCsvDate(JNIEnv* env,
   JNI_CATCH(env, 0);
 }
 
-JNIEXPORT jlong JNICALL
-Java_com_nvidia_spark_rapids_jni_CastStrings_parseTimestampWithFormat(JNIEnv* env,
-                                                                      jclass,
-                                                                      jlong input_column,
-                                                                      jstring j_format,
-                                                                      jint time_parser_policy,
-                                                                      jboolean allow_offset_seconds,
-                                                                      jboolean allow_empty_fraction)
+JNIEXPORT jlong JNICALL Java_com_nvidia_spark_rapids_jni_CastStrings_parseTimestampWithFormat(
+  JNIEnv* env,
+  jclass,
+  jlong input_column,
+  jstring j_format,
+  jint time_parser_policy,
+  jboolean allow_offset_seconds,
+  jboolean allow_empty_fraction,
+  jboolean adjacent_single_fraction)
 {
   JNI_NULL_CHECK(env, input_column, "input column is null", 0);
   JNI_NULL_CHECK(env, j_format, "format is null", 0);
@@ -467,8 +468,9 @@ Java_com_nvidia_spark_rapids_jni_CastStrings_parseTimestampWithFormat(JNIEnv* en
       format,
       legacy,
       exception_policy,
-      {.allow_offset_seconds = static_cast<bool>(allow_offset_seconds),
-       .allow_empty_fraction = static_cast<bool>(allow_empty_fraction)},
+      {.allow_offset_seconds     = static_cast<bool>(allow_offset_seconds),
+       .allow_empty_fraction     = static_cast<bool>(allow_empty_fraction),
+       .adjacent_single_fraction = static_cast<bool>(adjacent_single_fraction)},
       cudf::get_default_stream()));
   }
   CATCH_CAST_EXCEPTION(env, 0);
@@ -482,6 +484,7 @@ Java_com_nvidia_spark_rapids_jni_CastStrings_parseTimestampWithFormatChecked(
   jstring j_format,
   jboolean allow_offset_seconds,
   jboolean allow_empty_fraction,
+  jboolean adjacent_single_fraction,
   jlong timezone_info,
   jint timezone_index,
   jint default_offset_seconds)
@@ -499,8 +502,9 @@ Java_com_nvidia_spark_rapids_jni_CastStrings_parseTimestampWithFormatChecked(
       spark_rapids_jni::parse_timestamp_strings_with_format_checked(
         input_view,
         format,
-        {.allow_offset_seconds = static_cast<bool>(allow_offset_seconds),
-         .allow_empty_fraction = static_cast<bool>(allow_empty_fraction)},
+        {.allow_offset_seconds     = static_cast<bool>(allow_offset_seconds),
+         .allow_empty_fraction     = static_cast<bool>(allow_empty_fraction),
+         .adjacent_single_fraction = static_cast<bool>(adjacent_single_fraction)},
         {.transitions    = std::bit_cast<cudf::table_view const*>(timezone_info),
          .index          = static_cast<cudf::size_type>(timezone_index),
          .offset_seconds = static_cast<int32_t>(default_offset_seconds)}));

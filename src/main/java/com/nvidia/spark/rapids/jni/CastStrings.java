@@ -21,6 +21,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
+import java.time.format.SignStyle;
 import java.time.temporal.ChronoField;
 import java.text.ParsePosition;
 
@@ -58,6 +59,16 @@ public class CastStrings {
 
   /** Exception time parser policy. */
   public static final int TIME_PARSER_POLICY_EXCEPTION = 2;
+
+  private static final boolean ADJACENT_SINGLE_FRACTION = acceptsAdjacentSingleFraction();
+
+  private static boolean acceptsAdjacentSingleFraction() {
+    ParsePosition position = new ParsePosition(0);
+    new DateTimeFormatterBuilder().appendValue(ChronoField.YEAR, 4, 19, SignStyle.EXCEEDS_PAD)
+        .appendFraction(ChronoField.NANO_OF_SECOND, 1, 1, false)
+        .toFormatter().parseUnresolved("20241", position);
+    return position.getIndex() == 5;
+  }
 
   /**
    * Convert a string column to an integer column of a specified type stripping away leading and
@@ -454,7 +465,7 @@ public class CastStrings {
     }
     return new ColumnVector(
         parseTimestampWithFormat(input.getNativeView(), format, timeParserPolicy,
-            OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION));
+            OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION, ADJACENT_SINGLE_FRACTION));
   }
 
   /**
@@ -477,12 +488,12 @@ public class CastStrings {
       ZoneId zoneId) {
     if (format.indexOf('X') >= 0) {
       return new ColumnVector(parseTimestampWithFormatChecked(input.getNativeView(), format,
-          OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION, 0, 0, 0));
+          OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION, ADJACENT_SINGLE_FRACTION, 0, 0, 0));
     }
     ZoneId normalized = zoneId.normalized();
     if (normalized instanceof ZoneOffset) {
       return new ColumnVector(parseTimestampWithFormatChecked(input.getNativeView(), format,
-          OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION, 0, 0,
+          OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION, ADJACENT_SINGLE_FRACTION, 0, 0,
           ((ZoneOffset) normalized).getTotalSeconds()));
     }
     GpuTimeZoneDB.cacheDatabase();
@@ -492,7 +503,8 @@ public class CastStrings {
     }
     try (Table timezoneInfo = GpuTimeZoneDB.getTimezoneInfo()) {
       return new ColumnVector(parseTimestampWithFormatChecked(input.getNativeView(), format,
-          OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION, timezoneInfo.getNativeView(), timezoneIndex, 0));
+          OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION, ADJACENT_SINGLE_FRACTION,
+          timezoneInfo.getNativeView(), timezoneIndex, 0));
     }
   }
 
@@ -577,10 +589,11 @@ public class CastStrings {
 
   private static native long parseTimestampWithFormat(
       long input, String format, int timeParserPolicy, boolean allowOffsetSeconds,
-      boolean allowEmptyFraction);
+      boolean allowEmptyFraction, boolean adjacentSingleFraction);
 
   private static native long parseTimestampWithFormatChecked(
       long input, String format, boolean allowOffsetSeconds, boolean allowEmptyFraction,
+      boolean adjacentSingleFraction,
       long timezoneInfo, int timezoneIndex, int defaultOffsetSeconds);
 
 }

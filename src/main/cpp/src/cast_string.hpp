@@ -248,11 +248,12 @@ std::unique_ptr<cudf::column> parse_strings_to_date(
 /**
  * @brief Caller-resolved JDK compatibility options for timestamp formats.
  *
- * Both options default to false.
+ * All options default to false.
  */
 struct timestamp_format_parse_options {
-  bool allow_offset_seconds = false;  ///< Accept optional seconds for XX/XXX offsets only.
-  bool allow_empty_fraction = false;  ///< Allow zero fraction digits when input remains.
+  bool allow_offset_seconds     = false;  ///< Accept optional seconds for XX/XXX offsets only.
+  bool allow_empty_fraction     = false;  ///< Allow zero fraction digits when input remains.
+  bool adjacent_single_fraction = false;  ///< Include a single S in adjacent-value parsing.
 };
 
 /** @brief A valid formatted timestamp overflows Spark's checked microsecond conversion. */
