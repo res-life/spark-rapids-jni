@@ -33,10 +33,20 @@ public class CastStrings {
     NativeDepsLoader.loadNativeDeps();
   }
 
+  /** Corrected time parser policy. */
+  public static final int TIME_PARSER_POLICY_CORRECTED = 0;
+
+  /** Legacy time parser policy. */
+  public static final int TIME_PARSER_POLICY_LEGACY = 1;
+
+  /** Exception time parser policy. */
+  public static final int TIME_PARSER_POLICY_EXCEPTION = 2;
+
   // Older JDKs also accept optional offset seconds for XX/XXX. Match the running
   // formatter instead of assuming every supported Spark runtime has the same behavior.
   private static final boolean OPTIONAL_OFFSET_SECONDS = acceptsOffsetSeconds();
   private static final boolean EMPTY_FRACTION = acceptsEmptyFraction();
+  private static final boolean ADJACENT_SINGLE_FRACTION = acceptsAdjacentSingleFraction();
 
   private static boolean acceptsOffsetSeconds() {
     ParsePosition position = new ParsePosition(0);
@@ -50,17 +60,6 @@ public class CastStrings {
         .appendLiteral('Z').toFormatter().parseUnresolved("Z", position);
     return position.getIndex() == 1;
   }
-
-  /** Corrected time parser policy. */
-  public static final int TIME_PARSER_POLICY_CORRECTED = 0;
-
-  /** Legacy time parser policy. */
-  public static final int TIME_PARSER_POLICY_LEGACY = 1;
-
-  /** Exception time parser policy. */
-  public static final int TIME_PARSER_POLICY_EXCEPTION = 2;
-
-  private static final boolean ADJACENT_SINGLE_FRACTION = acceptsAdjacentSingleFraction();
 
   private static boolean acceptsAdjacentSingleFraction() {
     ParsePosition position = new ParsePosition(0);
