@@ -563,7 +563,7 @@ struct parse_with_format_fn {
 
     int64_t const days    = date_time_utils::to_epoch_day(d.year, d.month, d.day);
     int64_t const seconds = timezone.to_utc_seconds<UseRegion>(
-      days * 86400L + d.hour * 3600L + d.minute * 60L + d.second, d.offset_seconds);
+      days * 86'400L + d.hour * 3'600L + d.minute * 60L + d.second, d.offset_seconds);
     // Match Spark's checked seconds-to-microseconds multiplication before adding the fraction.
     constexpr int64_t micros_per_second = 1'000'000;
     constexpr auto min                  = cuda::std::numeric_limits<int64_t>::min();
