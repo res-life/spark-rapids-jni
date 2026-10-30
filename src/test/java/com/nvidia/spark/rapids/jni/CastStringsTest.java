@@ -1883,19 +1883,23 @@ public class CastStringsTest {
         "+08:60", "+8:30", "+083", "+08:3", "+08:30:00", "+08:30:01", "+083001",
         "+000001", "+18:00:01", "-18:00:01", "+08:30:60", "z", "UTC"};
     for (String separator : new String[]{" ", "'T'"}) {
-      for (String fraction : new String[]{"", ".SSS", ".SSSSSS", ".SSSSSSSSS"}) {
+      for (int width = 0; width <= 9; ++width) {
+        String fraction = width == 0 ? "" : "." + repeat('S', width);
         for (String offset : new String[]{"", "X", "XX", "XXX"}) {
           String format = "yyyy-MM-dd" + separator + "HH:mm:ss" + fraction + offset;
           List<String> inputs = new ArrayList<>();
           String dateTime = "1969-12-31" + (separator.equals(" ") ? " " : "T") + "23:59:59";
-          for (String digits : new String[]{"", ".", ".1", ".12", ".123", ".1234",
-              ".123456", ".123456789", ".1234567890", ".-1"}) {
+          List<String> fractions = new ArrayList<>(Arrays.asList("", ".", ".-1"));
+          for (int digits = 1; digits <= 10; ++digits) {
+            fractions.add("." + repeat('1', digits));
+          }
+          for (String digits : fractions) {
             for (String suffix : offsets) {
               inputs.add(dateTime + digits + suffix);
             }
           }
           // Calendar/time validity, full consumption, strict separators, and signed years.
-          String suffix = fraction.isEmpty() ? "" : ".123";
+          String suffix = width == 0 ? "" : "." + "123456789".substring(0, width);
           suffix += offset.isEmpty() ? "" : "Z";
           for (String date : new String[]{"2024-02-29", "2023-02-29", "0000-01-01",
               "-0001-01-01", "+10000-01-01", "10000-01-01", "+2024-01-01",
@@ -1910,7 +1914,10 @@ public class CastStringsTest {
           for (String boundary : new String[]{"+294247-01-10 04:00:54.775",
               "+294247-01-10 04:00:54.776", "-290308-12-21 19:59:05.224",
               "-290308-12-21 19:59:05.225"}) {
-            inputs.add(boundary.replace(" ", literal) + zone);
+            int dot = boundary.indexOf('.');
+            String fractionDigits = width == 0 ? ""
+                : "." + boundary.substring(dot + 1, dot + 1 + Math.min(width, 3));
+            inputs.add(boundary.substring(0, dot).replace(" ", literal) + fractionDigits + zone);
           }
           inputs.add("");
           inputs.add(null);
@@ -1929,12 +1936,14 @@ public class CastStringsTest {
     for (int width : new int[]{3, 9}) {
       String fraction = repeat('S', width);
       String format = "yyyy-MM-dd HH:mm:ss." + fraction + "/" + fraction;
-      List<String> inputs = Arrays.asList(
+      List<String> inputs = new ArrayList<>(Arrays.asList(
           "2024-01-01 00:00:00.123/123", "2024-01-01 00:00:00.123/456",
-          "2024-01-01 00:00:00.123/123000", "2024-01-01 00:00:00.000/0",
-          "2024-01-01 00:00:00.1234567/1234567",
-          "2024-01-01 00:00:00.1234567/1234568",
-          "2024-01-01 00:00:00.123456789/1234567890", "", null);
+          "2024-01-01 00:00:00.123/123000", "2024-01-01 00:00:00.000/0", "", null));
+      if (width == 9) {
+        inputs.add("2024-01-01 00:00:00.1234567/1234567");
+        inputs.add("2024-01-01 00:00:00.1234567/1234568");
+        inputs.add("2024-01-01 00:00:00.123456789/1234567890");
+      }
       assertParsedTimestampAgainstJdk(inputs, format);
       assertParsedTimestampCheckedAgainstJdk(inputs, format, ZoneOffset.UTC);
     }
