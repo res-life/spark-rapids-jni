@@ -38,16 +38,15 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/std/bit>
 #include <cuda/std/limits>
-#include <cuda/std/optional>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/iterator/counting_iterator.h>
 
 #include <algorithm>
 #include <cctype>
-#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -445,7 +444,7 @@ __device__ bool walk_tokens(unsigned char const* p,
 }
 
 struct timestamp_timezone_view {
-  cuda::std::optional<cudf::table_device_view> timezone_table;
+  cudf::column_device_view const* timezone_columns;
   cudf::size_type timezone_index;
   int32_t default_offset_seconds;
   bool has_explicit_offset;
@@ -453,11 +452,11 @@ struct timestamp_timezone_view {
   __device__ int64_t to_utc_seconds(int64_t seconds, int32_t explicit_offset_seconds) const
   {
     if (has_explicit_offset) { return seconds - explicit_offset_seconds; }
-    if (timezone_table) {
+    if (timezone_columns != nullptr) {
       return convert_timestamp<cudf::timestamp_s>(
                cudf::timestamp_s{cudf::duration_s{seconds}},
-               cudf::lists_column_device_view{timezone_table->column(0)},
-               cudf::lists_column_device_view{timezone_table->column(1)},
+               cudf::lists_column_device_view{timezone_columns[0]},
+               cudf::lists_column_device_view{timezone_columns[1]},
                timezone_index,
                true)
         .time_since_epoch()
@@ -469,33 +468,48 @@ struct timestamp_timezone_view {
 
 class timestamp_timezone_resolver {
  public:
-  timestamp_timezone_resolver(timestamp_parse_timezone timezone,
+  timestamp_timezone_resolver(cudf::strings_column_view const& input,
+                              timestamp_parse_timezone timezone,
                               bool has_explicit_offset,
                               cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
-    : view_{{}, timezone.index, timezone.offset_seconds, has_explicit_offset}
+    : view_{nullptr, timezone.index, timezone.offset_seconds, has_explicit_offset}
   {
-    if (timezone.transitions == nullptr || has_explicit_offset) { return; }
-    CUDF_EXPECTS(timezone.transitions->num_columns() == 2, "timezone table must have two columns");
-    CUDF_EXPECTS(timezone.transitions->column(0).type().id() == cudf::type_id::LIST &&
-                   timezone.transitions->column(1).type().id() == cudf::type_id::LIST,
-                 "timezone table columns must be LIST columns");
-    CUDF_EXPECTS(timezone.index >= 0 && timezone.index < timezone.transitions->num_rows(),
-                 "timezone index is out of range");
-    device_table_        = cudf::table_device_view::create(*timezone.transitions, stream, mr);
-    view_.timezone_table = *device_table_;
+    bool const use_region = timezone.transitions != nullptr && !has_explicit_offset;
+    std::vector<cudf::column_view> views{input.parent()};
+    if (use_region) {
+      CUDF_EXPECTS(timezone.transitions->num_columns() == 2,
+                   "timezone table must have two columns");
+      CUDF_EXPECTS(timezone.transitions->column(0).type().id() == cudf::type_id::LIST &&
+                     timezone.transitions->column(1).type().id() == cudf::type_id::LIST,
+                   "timezone table columns must be LIST columns");
+      CUDF_EXPECTS(timezone.index >= 0 && timezone.index < timezone.transitions->num_rows(),
+                   "timezone index is out of range");
+      views.push_back(timezone.transitions->column(0));
+      views.push_back(timezone.transitions->column(1));
+    }
+    // A span permits the input and timezone columns to have different row counts.
+    // The synchronous helper completes the single metadata upload before staging is released.
+    auto [storage, columns] =
+      cudf::create_column_device_views<cudf::column_device_view,
+                                       cudf::host_span<cudf::column_view const>>(
+        {views.data(), views.size()}, stream, mr);
+    storage_ = std::move(storage);
+    columns_ = columns;
+    if (use_region) { view_.timezone_columns = columns_ + 1; }
   }
 
   timestamp_timezone_view device_view() const { return view_; }
+  cudf::column_device_view const* input_device_view() const { return columns_; }
 
  private:
-  std::unique_ptr<cudf::table_device_view, std::function<void(cudf::table_device_view*)>>
-    device_table_;
+  std::unique_ptr<cuda::device_buffer<std::byte>> storage_;
+  cudf::column_device_view const* columns_;
   timestamp_timezone_view view_;
 };
 
 struct parse_with_format_fn {
-  cudf::column_device_view d_strings;
+  cudf::column_device_view const* d_strings;
   cudf::device_span<format_token const> tokens;
   bool legacy;
   cudf::device_span<format_token const> legacy_tokens;
@@ -563,11 +577,11 @@ struct parse_with_format_fn {
 
   __device__ void operator()(cudf::size_type idx) const
   {
-    if (d_strings.is_null(idx)) {
+    if (d_strings->is_null(idx)) {
       set_invalid(idx);
       return;
     }
-    auto const sv = d_strings.element<cudf::string_view>(idx);
+    auto const sv = d_strings->element<cudf::string_view>(idx);
     auto const* p = reinterpret_cast<unsigned char const*>(sv.data());
 
     cudf::timestamp_us parsed;
@@ -667,7 +681,8 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_impl(
     std::any_of(host_tokens.begin(), host_tokens.end(), [](auto const& token) {
       return token.kind == TOK_OFFSET;
     });
-  timestamp_timezone_resolver timezone_resolver{timezone, has_explicit_offset, stream, temp_mr};
+  timestamp_timezone_resolver timezone_resolver{
+    input, timezone, has_explicit_offset, stream, temp_mr};
   std::unique_ptr<rmm::device_scalar<int32_t>> arithmetic_overflow;
   if (check_overflow) {
     arithmetic_overflow = std::make_unique<rmm::device_scalar<int32_t>>(stream, temp_mr);
@@ -691,7 +706,6 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_impl(
       std::make_unique<rmm::device_scalar<cudf::size_type>>(num_rows, stream, temp_mr);
   }
 
-  auto const d_input = cudf::column_device_view::create(input.parent(), stream, temp_mr);
   auto result =
     cudf::make_timestamp_column(cudf::data_type{cudf::type_to_id<cudf::timestamp_us>()},
                                 num_rows,
@@ -708,7 +722,7 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_impl(
     thrust::make_counting_iterator(0),
     num_rows,
     parse_with_format_fn{
-      *d_input,
+      timezone_resolver.input_device_view(),
       cudf::device_span<format_token const>{device_tokens.data(), device_tokens.size()},
       legacy,
       cudf::device_span<format_token const>{device_legacy_tokens.data(),

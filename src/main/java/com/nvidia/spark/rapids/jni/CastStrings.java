@@ -501,10 +501,10 @@ public class CastStrings {
     if (timezoneIndex == null) {
       throw new IllegalArgumentException("Timezone is absent from the GPU database: " + zoneId);
     }
-    try (Table timezoneInfo = GpuTimeZoneDB.getTimezoneInfo()) {
+    try (Table timezoneInfo = GpuTimeZoneDB.getTimezoneInfo(timezoneIndex)) {
       return new ColumnVector(parseTimestampWithFormatChecked(input.getNativeView(), format,
           OPTIONAL_OFFSET_SECONDS, EMPTY_FRACTION, ADJACENT_SINGLE_FRACTION,
-          timezoneInfo.getNativeView(), timezoneIndex, 0));
+          timezoneInfo.getNativeView(), 0, 0));
     }
   }
 

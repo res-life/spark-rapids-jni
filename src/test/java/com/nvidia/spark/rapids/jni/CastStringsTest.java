@@ -2043,6 +2043,21 @@ public class CastStringsTest {
   }
 
   @Test
+  void parseTimestampWithFormatChecked_selectedTimezoneRow() {
+    GpuTimeZoneDB.cacheDatabase();
+    for (String zone : new String[]{"America/New_York", "Europe/Paris", "Asia/Kathmandu"}) {
+      Integer index = GpuTimeZoneDB.getIndexToTransitionTable(zone);
+      try (Table timezoneInfo = GpuTimeZoneDB.getTimezoneInfo(index)) {
+        assertEquals(1, timezoneInfo.getRowCount());
+      }
+      List<String> inputs = Arrays.asList(
+          "1900-01-01 00:00:00.123", "2021-03-14 02:30:00.123",
+          "2021-11-07 01:30:00.123", "2030-01-01 00:00:00.123", null);
+      assertParsedTimestampCheckedAgainstJdk(inputs, "yyyy-MM-dd HH:mm:ss.SSS", ZoneId.of(zone));
+    }
+  }
+
+  @Test
   void parseTimestampWithFormatChecked_overflowInMixedBatch() {
     String[] inputs = new String[4097];
     Arrays.fill(inputs, "2024-01-01 00:00:00.123456");
