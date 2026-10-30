@@ -50,6 +50,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -449,10 +450,10 @@ struct timestamp_timezone_view {
   int32_t default_offset_seconds;
   bool has_explicit_offset;
 
+  template <bool UseRegion>
   __device__ int64_t to_utc_seconds(int64_t seconds, int32_t explicit_offset_seconds) const
   {
-    if (has_explicit_offset) { return seconds - explicit_offset_seconds; }
-    if (timezone_columns != nullptr) {
+    if constexpr (UseRegion) {
       return convert_timestamp<cudf::timestamp_s>(
                cudf::timestamp_s{cudf::duration_s{seconds}},
                cudf::lists_column_device_view{timezone_columns[0]},
@@ -461,8 +462,9 @@ struct timestamp_timezone_view {
                true)
         .time_since_epoch()
         .count();
+    } else {
+      return seconds - (has_explicit_offset ? explicit_offset_seconds : default_offset_seconds);
     }
-    return seconds - default_offset_seconds;
   }
 };
 
@@ -508,6 +510,7 @@ class timestamp_timezone_resolver {
   timestamp_timezone_view view_;
 };
 
+template <bool UseRegion>
 struct parse_with_format_fn {
   cudf::column_device_view const* d_strings;
   cudf::device_span<format_token const> tokens;
@@ -559,7 +562,7 @@ struct parse_with_format_fn {
     if (d.year < -300'000 || d.year > 300'000) { return set_overflow(); }
 
     int64_t const days    = date_time_utils::to_epoch_day(d.year, d.month, d.day);
-    int64_t const seconds = timezone.to_utc_seconds(
+    int64_t const seconds = timezone.to_utc_seconds<UseRegion>(
       days * 86400L + d.hour * 3600L + d.minute * 60L + d.second, d.offset_seconds);
     // Match Spark's checked seconds-to-microseconds multiplication before adding the fraction.
     constexpr int64_t micros_per_second = 1'000'000;
@@ -717,21 +720,28 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_impl(
   // buffer uninitialized is safe.
   auto validity = rmm::device_uvector<bool>(num_rows, stream, temp_mr);
 
-  thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, temp_mr),
-    thrust::make_counting_iterator(0),
-    num_rows,
-    parse_with_format_fn{
-      timezone_resolver.input_device_view(),
-      cudf::device_span<format_token const>{device_tokens.data(), device_tokens.size()},
-      legacy,
-      cudf::device_span<format_token const>{device_legacy_tokens.data(),
-                                            device_legacy_tokens.size()},
-      first_exception_row ? first_exception_row->data() : nullptr,
-      validity.begin(),
-      result->mutable_view().begin<cudf::timestamp_us>(),
-      arithmetic_overflow ? arithmetic_overflow->data() : nullptr,
-      timezone_resolver.device_view()});
+  auto launch = [&](auto region_tag) {
+    thrust::for_each_n(
+      rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::make_counting_iterator(0),
+      num_rows,
+      parse_with_format_fn<decltype(region_tag)::value>{
+        timezone_resolver.input_device_view(),
+        cudf::device_span<format_token const>{device_tokens.data(), device_tokens.size()},
+        legacy,
+        cudf::device_span<format_token const>{device_legacy_tokens.data(),
+                                              device_legacy_tokens.size()},
+        first_exception_row ? first_exception_row->data() : nullptr,
+        validity.begin(),
+        result->mutable_view().begin<cudf::timestamp_us>(),
+        arithmetic_overflow ? arithmetic_overflow->data() : nullptr,
+        timezone_resolver.device_view()});
+  };
+  if (timezone_resolver.device_view().timezone_columns != nullptr) {
+    launch(std::true_type{});
+  } else {
+    launch(std::false_type{});
+  }
 
   if (first_exception_row) {
     // value(stream) synchronizes the stream before returning the device value to the host.
