@@ -47,6 +47,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -172,6 +173,17 @@ enum class format_dialect {
   exception_expression,
   csv_date
 };
+
+enum class timestamp_parse_mode { corrected, legacy, exception, checked };
+
+format_dialect dialect_for(timestamp_parse_mode mode)
+{
+  switch (mode) {
+    case timestamp_parse_mode::legacy: return format_dialect::legacy_expression;
+    case timestamp_parse_mode::exception: return format_dialect::exception_expression;
+    default: return format_dialect::corrected_expression;
+  }
+}
 
 format_token compile_csv_year(std::string const& format,
                               size_t next,
@@ -432,32 +444,11 @@ __device__ bool walk_tokens(unsigned char const* p,
   return true;
 }
 
-struct parse_with_format_fn {
-  cudf::column_device_view d_strings;
-  cudf::device_span<format_token const> tokens;
-  bool legacy;
-  cudf::device_span<format_token const> legacy_tokens;
-  cudf::size_type* first_exception_row;
-  bool* validity;
-  cudf::timestamp_us* output;
-  int32_t* arithmetic_overflow;
+struct timestamp_timezone_view {
   cuda::std::optional<cudf::table_device_view> timezone_table;
   cudf::size_type timezone_index;
   int32_t default_offset_seconds;
   bool has_explicit_offset;
-
-  // Sets the row's null bit. The output value is left uninitialized — under cuDF's null mask
-  // convention, masked-off positions are not read by downstream consumers.
-  __device__ void set_invalid(cudf::size_type idx) const { validity[idx] = false; }
-
-  __device__ bool set_overflow() const
-  {
-    if (arithmetic_overflow != nullptr) {
-      cuda::atomic_ref<int32_t, cuda::thread_scope_device>{*arithmetic_overflow}.store(
-        1, cuda::memory_order_relaxed);
-    }
-    return false;
-  }
 
   __device__ int64_t to_utc_seconds(int64_t seconds, int32_t explicit_offset_seconds) const
   {
@@ -473,6 +464,58 @@ struct parse_with_format_fn {
         .count();
     }
     return seconds - default_offset_seconds;
+  }
+};
+
+class timestamp_timezone_resolver {
+ public:
+  timestamp_timezone_resolver(timestamp_parse_timezone timezone,
+                              bool has_explicit_offset,
+                              cuda::stream_ref stream,
+                              rmm::device_async_resource_ref mr)
+    : view_{{}, timezone.index, timezone.offset_seconds, has_explicit_offset}
+  {
+    if (timezone.transitions == nullptr || has_explicit_offset) { return; }
+    CUDF_EXPECTS(timezone.transitions->num_columns() == 2, "timezone table must have two columns");
+    CUDF_EXPECTS(timezone.transitions->column(0).type().id() == cudf::type_id::LIST &&
+                   timezone.transitions->column(1).type().id() == cudf::type_id::LIST,
+                 "timezone table columns must be LIST columns");
+    CUDF_EXPECTS(timezone.index >= 0 && timezone.index < timezone.transitions->num_rows(),
+                 "timezone index is out of range");
+    device_table_        = cudf::table_device_view::create(*timezone.transitions, stream, mr);
+    view_.timezone_table = *device_table_;
+  }
+
+  timestamp_timezone_view device_view() const { return view_; }
+
+ private:
+  std::unique_ptr<cudf::table_device_view, std::function<void(cudf::table_device_view*)>>
+    device_table_;
+  timestamp_timezone_view view_;
+};
+
+struct parse_with_format_fn {
+  cudf::column_device_view d_strings;
+  cudf::device_span<format_token const> tokens;
+  bool legacy;
+  cudf::device_span<format_token const> legacy_tokens;
+  cudf::size_type* first_exception_row;
+  bool* validity;
+  cudf::timestamp_us* output;
+  int32_t* arithmetic_overflow;
+  timestamp_timezone_view timezone;
+
+  // Sets the row's null bit. The output value is left uninitialized — under cuDF's null mask
+  // convention, masked-off positions are not read by downstream consumers.
+  __device__ void set_invalid(cudf::size_type idx) const { validity[idx] = false; }
+
+  __device__ bool set_overflow() const
+  {
+    if (arithmetic_overflow != nullptr) {
+      cuda::atomic_ref<int32_t, cuda::thread_scope_device>{*arithmetic_overflow}.store(
+        1, cuda::memory_order_relaxed);
+    }
+    return false;
   }
 
   __device__ bool parse(unsigned char const* p,
@@ -501,9 +544,9 @@ struct parse_with_format_fn {
     // Reject it before the timezone helper's epoch-day conversion, which uses int32 days.
     if (d.year < -300'000 || d.year > 300'000) { return set_overflow(); }
 
-    int64_t const days = date_time_utils::to_epoch_day(d.year, d.month, d.day);
-    int64_t const seconds =
-      to_utc_seconds(days * 86400L + d.hour * 3600L + d.minute * 60L + d.second, d.offset_seconds);
+    int64_t const days    = date_time_utils::to_epoch_day(d.year, d.month, d.day);
+    int64_t const seconds = timezone.to_utc_seconds(
+      days * 86400L + d.hour * 3600L + d.minute * 60L + d.second, d.offset_seconds);
     // Match Spark's checked seconds-to-microseconds multiplication before adding the fraction.
     constexpr int64_t micros_per_second = 1'000'000;
     constexpr auto min                  = cuda::std::numeric_limits<int64_t>::min();
@@ -601,47 +644,30 @@ namespace {
 std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_impl(
   cudf::strings_column_view const& input,
   std::string const& format,
-  bool legacy,
-  bool exception_policy,
+  timestamp_parse_mode mode,
   timestamp_format_parse_options options,
   timestamp_parse_timezone timezone,
-  bool check_overflow,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
-  CUDF_EXPECTS(!(legacy && exception_policy),
-               "LEGACY and EXCEPTION policies cannot both be enabled",
-               std::invalid_argument);
-  auto host_tokens =
-    compile_format(format,
-                   legacy ? format_dialect::legacy_expression
-                          : (exception_policy ? format_dialect::exception_expression
-                                              : format_dialect::corrected_expression),
-                   options);
-  auto host_legacy_tokens = exception_policy
-                              ? compile_format(format, format_dialect::legacy_expression)
-                              : std::vector<format_token>{};
-  auto const num_rows     = input.size();
+  bool const legacy           = mode == timestamp_parse_mode::legacy;
+  bool const exception_policy = mode == timestamp_parse_mode::exception;
+  bool const check_overflow   = mode == timestamp_parse_mode::checked;
+  auto host_tokens            = compile_format(format, dialect_for(mode), options);
+  auto host_legacy_tokens     = exception_policy
+                                  ? compile_format(format, format_dialect::legacy_expression)
+                                  : std::vector<format_token>{};
+  auto const num_rows         = input.size();
   if (num_rows == 0) {
     return cudf::make_empty_column(cudf::data_type{cudf::type_to_id<cudf::timestamp_us>()});
   }
 
-  auto const temp_mr             = cudf::get_current_device_resource_ref();
-  bool const has_explicit_offset = format.find('X') != std::string::npos;
-  bool const use_region_timezone = timezone.transitions != nullptr && !has_explicit_offset;
-  if (use_region_timezone) {
-    CUDF_EXPECTS(timezone.transitions->num_columns() == 2, "timezone table must have two columns");
-    CUDF_EXPECTS(timezone.transitions->column(0).type().id() == cudf::type_id::LIST &&
-                   timezone.transitions->column(1).type().id() == cudf::type_id::LIST,
-                 "timezone table columns must be LIST columns");
-    CUDF_EXPECTS(timezone.index >= 0 && timezone.index < timezone.transitions->num_rows(),
-                 "timezone index is out of range");
-  }
-  auto const d_timezone =
-    use_region_timezone ? cudf::table_device_view::create(*timezone.transitions, stream, temp_mr)
-                        : nullptr;
-  cuda::std::optional<cudf::table_device_view> timezone_table;
-  if (d_timezone) { timezone_table = *d_timezone; }
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+  bool const has_explicit_offset =
+    std::any_of(host_tokens.begin(), host_tokens.end(), [](auto const& token) {
+      return token.kind == TOK_OFFSET;
+    });
+  timestamp_timezone_resolver timezone_resolver{timezone, has_explicit_offset, stream, temp_mr};
   std::unique_ptr<rmm::device_scalar<int32_t>> arithmetic_overflow;
   if (check_overflow) {
     arithmetic_overflow = std::make_unique<rmm::device_scalar<int32_t>>(stream, temp_mr);
@@ -691,10 +717,7 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_impl(
       validity.begin(),
       result->mutable_view().begin<cudf::timestamp_us>(),
       arithmetic_overflow ? arithmetic_overflow->data() : nullptr,
-      timezone_table,
-      timezone.index,
-      timezone.offset_seconds,
-      has_explicit_offset});
+      timezone_resolver.device_view()});
 
   if (first_exception_row) {
     // value(stream) synchronizes the stream before returning the device value to the host.
@@ -729,8 +752,13 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
   rmm::device_async_resource_ref mr)
 {
   SRJ_FUNC_RANGE();
-  return parse_timestamp_strings_with_format_impl(
-    input, format, legacy, exception_policy, options, {}, false, stream, mr);
+  CUDF_EXPECTS(!(legacy && exception_policy),
+               "LEGACY and EXCEPTION policies cannot both be enabled",
+               std::invalid_argument);
+  auto const mode =
+    legacy ? timestamp_parse_mode::legacy
+           : (exception_policy ? timestamp_parse_mode::exception : timestamp_parse_mode::corrected);
+  return parse_timestamp_strings_with_format_impl(input, format, mode, options, {}, stream, mr);
 }
 
 std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
@@ -755,7 +783,7 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_checked(
 {
   SRJ_FUNC_RANGE();
   return parse_timestamp_strings_with_format_impl(
-    input, format, false, false, options, timezone, true, stream, mr);
+    input, format, timestamp_parse_mode::checked, options, timezone, stream, mr);
 }
 
 }  // namespace spark_rapids_jni
