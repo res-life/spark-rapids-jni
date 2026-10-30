@@ -314,7 +314,7 @@ struct timestamp_parse_timezone {
  * @param mr Memory resource for the returned column.
  * @return A timestamp_us column, with nulls for invalid inputs.
  */
-std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
+[[nodiscard]] std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
   cudf::strings_column_view const& input,
   std::string const& format,
   bool legacy,
@@ -328,7 +328,7 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
  *
  * Retains the original explicit-stream and memory-resource call signatures.
  */
-std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
+[[nodiscard]] std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
   cudf::strings_column_view const& input,
   std::string const& format,
   bool legacy,
@@ -352,7 +352,7 @@ std::unique_ptr<cudf::column> parse_timestamp_strings_with_format(
  * @throws timestamp_parse_overflow If a valid date/time overflows checked microsecond arithmetic.
  * @return A UTC timestamp_us column, with nulls for malformed inputs.
  */
-std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_checked(
+[[nodiscard]] std::unique_ptr<cudf::column> parse_timestamp_strings_with_format_checked(
   cudf::strings_column_view const& input,
   std::string const& format,
   timestamp_format_parse_options options,
