@@ -128,6 +128,10 @@ ConfigureTest(SUBSTRING_INDEX
 ConfigureTest(REVERSE_STRINGS
     reverse_strings.cpp)
 
+ConfigureTest(ROARING_BITMAP
+    roaring_bitmap.cpp)
+target_link_libraries(ROARING_BITMAP PRIVATE roaring)
+
 ConfigureTest(SHUFFLE_SPLIT
     shuffle_split.cu)
     

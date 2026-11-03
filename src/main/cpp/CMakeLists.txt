@@ -154,6 +154,12 @@ else()
   rapids_find_package(cudf REQUIRED)
 endif()
 
+# CRoaring is used to validate portable output in tests and as the CPU benchmark baseline.
+if(BUILD_TESTS OR BUILD_BENCHMARKS)
+  set(CUDF_EXCLUDE_DEPS_FROM_ALL ON)
+  include("${CUDF_DIR}/cpp/cmake/thirdparty/get_croaring.cmake")
+endif()
+
 # cuCollections
 # As of nvidia/cudf PR #22277 (commit 5a375a3417ef70c55564bd0c4c6255a2da5dca49), libcudf
 # wraps its `cuco::cuco` link with `$<BUILD_LOCAL_INTERFACE:...>`, so the cuco headers are no
@@ -242,6 +248,7 @@ add_library(
   src/ProtobufJni.cpp
   src/RangeSequenceJni.cpp
   src/RegexRewriteUtilsJni.cpp
+  src/Roaring64BitmapJni.cpp
   src/RowConversionJni.cpp
   src/SparkResourceAdaptorJni.cpp
   src/StringUtilsJni.cpp
@@ -299,6 +306,7 @@ add_library(
   src/range_sequence.cu
   src/regex_rewrite_utils.cu
   src/reverse_strings.cu
+  src/roaring_bitmap.cu
   src/row_conversion.cu
   src/round_float.cu
   src/shuffle_assemble.cu

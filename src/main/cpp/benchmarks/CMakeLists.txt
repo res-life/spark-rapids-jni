@@ -100,3 +100,7 @@ ConfigureBench(PROTOBUF_DECODE_BENCH
 
 ConfigureBench(FROM_JSON_BENCH
   from_json.cu)
+
+ConfigureBench(ROARING_BITMAP_BENCH
+  roaring_bitmap.cu)
+target_link_libraries(ROARING_BITMAP_BENCH roaring)

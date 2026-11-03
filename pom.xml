@@ -110,6 +110,7 @@
     <mockito.version>2.25.0</mockito.version>
     <native.build.path>${project.build.directory}/jni/cmake-build</native.build.path>
     <parquet.version>1.15.2</parquet.version>
+    <roaringbitmap.version>1.2.0</roaringbitmap.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <slf4j.version>1.7.30</slf4j.version>
     <iceberg.version>1.6.1</iceberg.version>
@@ -201,6 +202,12 @@
         <artifactId>iceberg-core</artifactId>
         <version>${iceberg.version}</version>
         <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.roaringbitmap</groupId>
+      <artifactId>RoaringBitmap</artifactId>
+      <version>${roaringbitmap.version}</version>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 
